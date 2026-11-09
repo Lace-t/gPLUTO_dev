@@ -1,0 +1,10 @@
+PLOAD,1
+
+Q  = prs
+Qt = REVERSE(Q,1)
+
+PRINT,MAX(ABS(Q-Qt))
+
+
+
+END

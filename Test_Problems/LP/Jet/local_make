@@ -1,0 +1,2 @@
+OBJ     += halo.o jet.o
+HEADERS += halo.hpp jet.hpp

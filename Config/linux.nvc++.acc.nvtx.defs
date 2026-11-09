@@ -1,0 +1,26 @@
+# --------------------------------------------
+# Compile with nvc++ compiler (with GPU support)
+# Serial version with info, nvtx, -g and -O0
+# --------------------------------------------
+CC      = nvc++
+
+DIAG_SUPPRESS_FLAGS = \
+    --diag_suppress=set_but_not_used \
+    --diag_suppress=code_is_unreachable \
+    --diag_suppress=initialization_not_reachable \
+    --diag_suppress=white_space_inside_splice \
+    --diag_suppress=declared_but_not_referenced
+
+# Use the managed spelling supported by both older and newer NVHPC SDKs.
+# Leave architecture selection to the compiler by default. For cross-builds:
+#   make GPU_ARCH=cc80            # A100
+#   make GPU_ARCH=cc86            # RTX 3090 Ti
+#   make GPU_ARCH=cc80,cc86        # Multiple targets supported by this SDK
+GPU_ARCH ?=
+NVHPC_GPU_FLAGS = -gpu=rdc,managed $(if $(strip $(GPU_ARCH)),-gpu=$(GPU_ARCH))
+
+CFLAGS  = -c -acc -std=c++17 $(NVHPC_GPU_FLAGS) -Minfo=accel -Minline=1000 -O3 -g -D_USE_NVTX $(DIAG_SUPPRESS_FLAGS)
+
+LDFLAGS = -lm -acc $(NVHPC_GPU_FLAGS) -cudalib=nccl -lnccl -cudalib=nvtx3
+
+PARALLEL = FALSE

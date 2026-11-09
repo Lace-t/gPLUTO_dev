@@ -1,0 +1,269 @@
+[build-system]
+requires = ["flit_core >=3.11,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "py-pluto"
+version = "1.2.3"
+description = "PyPLUTO: Plotting routines for PLUTO"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "BSD-3-Clause" }
+authors = [
+    { name = "G. Mattia", email = "mattia@mpia.de" },
+    { name = "D. Crocco" },
+    { name = "D. Melon Fuksman" },
+    { name = "M. Bugli" },
+    { name = "V. Berta" },
+    { name = "E. Puzzoni" },
+    { name = "A. Mignone" },
+    { name = "B. Vaidya" }
+]
+dependencies = [
+    "astropy>=7.2.0",
+    "contourpy>=1.2.1",
+    "numpy>=2.0.0",
+    "matplotlib>=3.8.4",
+    "scipy>=1.13.0",
+    "numexpr>=2.10.0",
+    "h5py>=3.11.0",
+    "inifix>=7.0.0",
+]
+
+[project.optional-dependencies]
+gui = [
+    "PySide6",
+]
+
+pasta = [
+    "pastamarkers"
+]
+
+[dependency-groups]
+docs = [
+    "sphinx>=9.0.0",
+    "sphinx-automodapi>=0.20.0",
+    "numpydoc>=1.0.0"
+]
+test = [
+    "pytest>=9.0.0",
+    "pytest-doctestplus>=1.5.0",
+    "coverage>=7.3.0",
+    "pytest-cov>=7.0.0",
+    "pytest-xdist>=3.8.0",
+] 
+dev = [
+    "uv",
+    "auto-walrus",
+    "pandas-stubs",
+    "h5py-stubs",
+    "pre-commit",
+    "pyright",
+    "ruff",
+    "radon",
+    "pydata-sphinx-theme",
+]
+
+# Type checkers we keep installable but do NOT yet use as the source of truth.
+# pyright (in the `dev` group) is the standard checker for PyPLUTO. Every issue
+# these would report is already covered by pyright; they are kept here so we can
+# switch to one of them once they are mature enough to validate the patterns
+# PyPLUTO relies on (Generic + overloaded __new__, Unpack[TypedDict] extra-key
+# rejection, etc.).
+typefuture = [
+    "pyrefly",
+    "ty",
+]
+
+notebook = [
+    "ipython>=9.0.0",
+]
+
+dev-test = [
+    { include-group = "dev" },
+    { include-group = "test" },
+]
+
+dev-docs = [
+    { include-group = "dev" },
+
+    { include-group = "docs" },
+]
+
+local-dev = [
+    { include-group = "dev" },
+    { include-group = "test" },
+    { include-group = "docs" },
+    { include-group = "notebook" },
+]
+
+[project.scripts]
+pypluto-gui = "pyPLUTO.gui.main:main"
+pypluto-examples = "pyPLUTO.utils.examples_cli:main"
+
+[tool.flit.module]
+name = "pyPLUTO"
+
+[project.urls]
+Homepage = "https://github.com/GiMattia/PyPLUTO"
+Changelog = "https://github.com/GiMattia/PyPLUTO/blob/main/CHANGELOG.md"
+Examples = "https://github.com/GiMattia/PyPLUTO/tree/main/Examples"
+
+[tool.coverage.run]
+source = ["src"]
+branch = true
+
+[tool.coverage.report]
+omit = [
+    "*/Tests/*",
+    "*/Docs/*",
+    "*/.venv/*",
+    "*/site-packages/*",
+]
+exclude_lines = [
+    "pragma: no cover",
+    "@overload",
+    "if TYPE_CHECKING:",
+    "def __repr__",
+    "def __str__",
+    "raise NotImplementedError"
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 80
+respect-gitignore = true
+fix = true
+fix-only = true
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle (errors)
+    "F",  # pyflakes (logical errors)
+    "W",    # warnings
+    "I",  # isort (import sorting)
+    "UP", # pyupgrade (e.g. f-strings for older format)
+    "D",  # pydocstyle (docstring conventions)
+    "PL", # pylint (careful coding style)
+    "B",  # flake8-bugbear (likely bugs and design flaws)
+    "A",  # flake8-builtins (avoid shadowing built-ins)
+    "C4", # flake8-comprehensions (inefficient comprehensions)
+    "SIM",# flake8-simplify (simplify complex logic)
+    "PT", # flake8-pytest-style (if you use pytest)
+    "RUF",# Ruff-specific rules
+    "ANN",# ruff-annotations (type annotations)
+]
+
+ignore = [
+    "D203",  # Conflicts with D211 (one-blank-line-before-class)
+    "D213"   # Conflicts with D212 (summary on first vs second line)
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+"Tests/*" = ["D", "PLR2004"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+
+[tool.setuptools.package-data]
+pyPLUTO = ["py.typed"]
+
+[tool.uv]
+no-build-package = [
+    # mandatory deps
+    "contourpy",
+    "coverage",
+    "h5py",
+    "kiwisolver",
+    "matplotlib",
+    "numexpr",
+    "numpy",
+    "pandas",
+    "pillow",
+    "scipy",
+
+    # dev deps
+    "ruff",
+    "pre-commit",
+
+
+    # transitive deps
+    "decorator",
+    "docutils",
+    "markupsafe",
+    "jinja2",
+    "setuptools",
+    "simplejson",
+]
+constraint-dependencies = [
+    "jsonschema>=4.26.0",
+    "pillow>=12.2.0",
+]
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["linux-64", "osx-64", "osx-arm64", "win-64"]
+
+[tool.pixi.dependencies]
+python = "3.11.*"
+
+[tool.pixi.pypi-dependencies]
+py-pluto = { path = ".", editable = true }
+
+[tool.pixi.feature.gui.pypi-dependencies]
+py-pluto = { path = ".", editable = true, extras = ["gui"] }
+
+[tool.pixi.feature.pasta.pypi-dependencies]
+py-pluto = { path = ".", editable = true, extras = ["pasta"] }
+
+[tool.pixi.feature.full.pypi-dependencies]
+py-pluto = { path = ".", editable = true, extras = ["gui", "pasta"] }
+
+[tool.pixi.environments]
+default = { features = [] }
+gui = { features = ["gui"] }
+pasta = { features = ["pasta"] }
+full = { features = ["full"] }
+
+dev = { features = ["dev"] }
+typefuture = { features = ["typefuture"] }
+test = { features = ["test"] }
+docs = { features = ["docs"] }
+notebook = { features = ["notebook"] }
+dev-test = { features = ["dev", "test"] }
+dev-docs = { features = ["dev", "docs"] }
+local-dev = { features = ["dev", "test", "docs", "notebook"] }
+
+# pyright is the standard type checker for PyPLUTO (run via the `dev` dependency
+# group). See CONTRIBUTING for the rationale.
+[tool.pyright]
+pythonVersion = "3.11"
+typeCheckingMode = "standard"
+include = ["src"]
+exclude = [
+    "**/__pycache__",
+    "**/node_modules",
+    "**/.*",
+    "**/.venv",
+    "Tests",
+]
+
+# NOTE: pyrefly and ty (the `typefuture` dependency group) are kept available
+# but are NOT the source of truth yet; pyright already covers every issue they
+# would report. We will switch once they mature on the patterns PyPLUTO uses.
+[tool.pyrefly]
+project-includes = [
+    "**/*.py*",
+    "**/*.ipynb",
+]
+project-excludes = [
+    "Tests/**/*.py*",
+    "Tests/**/*.ipynb",
+]
+python-version = "3.11"
+preset = "basic"

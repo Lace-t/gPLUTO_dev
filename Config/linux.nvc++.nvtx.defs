@@ -1,0 +1,7 @@
+# ------------------------------------------
+# Compile with nvc compiler (no GPU support)
+# ------------------------------------------
+
+CC      = nvc++
+CFLAGS  = -c -O3 -cudalib=nvtx3 -D_USE_NVTX
+LDFLAGS = -lm -cudalib=nvtx3

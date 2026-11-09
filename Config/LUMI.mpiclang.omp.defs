@@ -1,0 +1,18 @@
+# --------------------------------------------
+# Compile with CLANG compiler (with GPU support)
+# OpenMP version
+# --------------------------------------------
+CC = ${ROCM_PATH}/llvm/bin/clang++
+CFLAGS  = -c -std=c++17 -fopenmp -fgpu-rdc -D_USE_ROCTX \
+  --offload-arch=gfx90a -O3 -fopenmp-targets=amdgcn-amd-amdhsa \
+  -Xopenmp-target=amdgcn-amd-amdhsa -march=gfx90a -Rpass-analysis=kernel-resource-usage \
+  -I /opt/cray/pe/mpich/8.1.28/ofi/amd/5.0/include \
+  -I /pfs/lustrep3/scratch/project_462000394/amd-sw/rocm/rocm-6.2.4/include/rccl \
+  -D__HIP_PLATFORM_AMD__ -D_AMDGPU
+LDFLAGS = -lm -fopenmp -L /opt/cray/pe/mpich/8.1.28/ofi/amd/5.0/lib \
+  -lmpi ${PE_MPICH_GTL_DIR_amd_gfx90a} ${PE_MPICH_GTL_LIBS_amd_gfx90a} \
+  -lrccl -L${ROCM_PATH}/lib -L${ROCM_PATH}/llvm/lib -lroctx64 \
+  --offload-arch=gfx90a -fopenmp-targets=amdgcn-amd-amdhsa -Xopenmp-target=amdgcn-amd-amdhsa \
+  -march=gfx90a -Rpass-analysis=kernel-resource-usage  
+
+PARALLEL = TRUE

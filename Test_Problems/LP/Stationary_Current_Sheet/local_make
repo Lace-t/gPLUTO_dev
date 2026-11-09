@@ -1,0 +1,3 @@
+
+#LDFLAGS += -lgsl -lgslcblas
+

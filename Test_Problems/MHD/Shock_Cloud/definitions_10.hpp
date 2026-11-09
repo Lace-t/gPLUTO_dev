@@ -1,0 +1,39 @@
+#define  PHYSICS                        MHD
+#define  DIMENSIONS                     3
+#define  GEOMETRY                       CARTESIAN
+#define  MAPPED_GRID                    NO
+#define  BODY_FORCE                     NO
+#define  COOLING                        NO
+#define  RECONSTRUCTION                 WENOZ
+#define  TIME_STEPPING                  RK4
+#define  NTRACER                        0
+#define  PARTICLES                      NO
+#define  USER_DEF_PARAMETERS            3
+
+// Physics dependent declarations
+
+#define  EOS                            IDEAL
+#define  ENTROPY_SWITCH                 NO
+#define  DIVB_CONTROL                   CONSTRAINED_TRANSPORT
+#define  BACKGROUND_FIELD               NO
+#define  AMBIPOLAR_DIFFUSION            NO
+#define  RESISTIVITY                    NO
+#define  HALL_MHD                       NO
+#define  THERMAL_CONDUCTION             NO
+#define  VISCOSITY                      NO
+#define  ROTATING_FRAME                 NO
+
+// User-defined parameters (labels)
+
+#define  B_POST                         0
+#define  B_PRE                          1
+#define  RADIUS                         2
+
+// [Beg] user-defined constants (do not change this line)
+
+#define  CT_EMF_AVERAGE                 UCT_HLLD
+#define  HO_LAP_LIMITER                 HO_RDER_LIM
+#define  HO_ORDER_REDUCTION             WENO3
+#define  LIMITER                        UMIST_LIM
+
+// [End] user-defined constants (do not change this line)

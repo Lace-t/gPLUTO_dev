@@ -1,0 +1,49 @@
+Compling the Code:
+==================
+
+Choose one among the available configuration files to create your own 
+definitions.hpp and pluto.ini, e.g.:
+
+> cp definitions_01.hpp definitions.hpp
+> cp pluto_01.ini       pluto.ini
+
+Run the python script, 
+
+> python $gPLUTO_DIR/setup.py
+
+and confirm the present selection by pressing enter. 
+Also, choose a suitable makefile, e.g. "linux.g++.defs".
+If you use GNUPLOT to visualize data, before compiling, add
+
+#define  GNUPLOT_HEADER                 YES
+
+to your definitions.hpp.
+
+Now you can simply type "make" at the command prompt.
+
+Running the Code:
+=================
+
+The left and right states for the problem are defined inside "pluto.ini".
+Se the frequency of tab/dbl output formats.
+You can leave the deafault and simply run the code with 
+
+> ./pluto 
+
+at the command prompt (>).
+
+Visualizing the data:
+=====================
+
+Data can be visualized using Gnuplot.
+A script "shock_tube.gp" can be used to produce an animation throughout the
+simulation data.
+[Note: to be able to run the script, the environment variable 
+ GNUPLOT_LIB should point to $gPLUTO_DIR/Tools/Gnuplot]
+
+The variable to be visualized together with its name can be set under the
+section "Plot Specifications".
+Variable names (rho, prs, vx1, ...) are listed from "pluto.gp".
+
+
+

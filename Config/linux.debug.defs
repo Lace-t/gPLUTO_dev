@@ -1,0 +1,4 @@
+CC      = g++
+CFLAGS  = -c -O0 -std=c++17 -g
+
+LDFLAGS = -lm

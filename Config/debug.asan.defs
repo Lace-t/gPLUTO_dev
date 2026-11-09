@@ -1,0 +1,3 @@
+CC      = clang++
+CFLAGS  = -c -fsanitize=address -g -std=c++17 -shared-libasan
+LDFLAGS = -lm -Wl,-rpath,/usr/lib/clang/$(clang -dumpversion)/lib/darwin -lclang_rt.asan_osx_dynamic

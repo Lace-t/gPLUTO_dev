@@ -1,0 +1,21 @@
+# --------------------------------------------
+# Compile with nvc compiler (with GPU support)
+# OpenMP version
+# --------------------------------------------
+
+CC = mpicxx
+
+DIAG_SUPPRESS_FLAGS = \
+    --diag_suppress=set_but_not_used \
+    --diag_suppress=code_is_unreachable \
+    --diag_suppress=initialization_not_reachable \
+    --diag_suppress=white_space_inside_splice \
+    --diag_suppress=declared_but_not_referenced
+
+CFLAGS  = -c -std=c++17 -mp=gpu -gpu=rdc,mem:managed -cudalib=nccl -O3 -cudalib=nvtx3 -D_USE_NVTX $(DIAG_SUPPRESS_FLAGS)
+#-fgpu-rdc -Minfo=mp,accel 
+
+LDFLAGS = -lm -mp=gpu -gpu=rdc,mem:managed -cudalib=nccl -lnccl -cudalib=nvtx3
+#-lroctx64 
+
+PARALLEL = TRUE

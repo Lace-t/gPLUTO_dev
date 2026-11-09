@@ -1,0 +1,18 @@
+# --------------------------------------------
+# Compile with nvc compiler (with GPU support)
+# OpenMP version
+# --------------------------------------------
+#CC      = nvc++
+CC = ${ROCM_PATH}/llvm/bin/clang++
+#CFLAGS = -c -O3 -std=c++17 -fopenmp -D_USE_ROCTX  --offload-arch=gfx90a -I ${ROCM_PATH}/include #/appl/lumi/SW/LUMI-24.03/G/EB/rocm/6.2.2/include #--ggdb
+CFLAGS  = -c -std=c++17 -fopenmp -fgpu-rdc -D_USE_ROCTX --offload-arch=gfx90a -O3 -fopenmp-targets=amdgcn-amd-amdhsa -Xopenmp-target=amdgcn-amd-amdhsa -march=gfx90a -Rpass-analysis=kernel-resource-usage -D_AMDGPU
+#CFLAGS += -ggdb 
+#-O0 #-gpu=rdc,managed 
+#-c -mp=gpu -gpu=rdc,managed -Minfo=mp,accel -Minline=1000 -O0 -g #
+#-gpu=cc80  -D_USE_NVTX 
+
+LDFLAGS = -lm -fopenmp -L${ROCM_PATH}/lib -L${PLUTO_DIR}/Src/MHD/GLM -lroctx64 --offload-arch=gfx90a -fopenmp-targets=amdgcn-amd-amdhsa -Xopenmp-target=amdgcn-amd-amdhsa -march=gfx90a -Rpass-analysis=kernel-resource-usage 
+#-mp=gpu -gpu=cc80 -cudalib=nvtx3 -D_USE_NVTX
+#-cudalib=nccl -lnccl
+
+PARALLEL = FALSE

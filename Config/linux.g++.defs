@@ -1,0 +1,5 @@
+CC      = g++
+CFLAGS  = -c -O3 -std=c++17
+
+LDFLAGS = -lm
+HDF5    = TRUE

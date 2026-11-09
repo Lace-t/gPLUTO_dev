@@ -1,0 +1,11 @@
+# --------------------------------------------
+# Compile with CLANG + mpi support.  
+# NO GPU support
+# --------------------------------------------
+CC = ${ROCM_PATH}/llvm/bin/clang++
+CFLAGS  = -c -std=c++17 -O3 -I /opt/cray/pe/mpich/8.1.28/ofi/amd/5.0/include
+#-I /pfs/lustrep3/scratch/project_462000394/amd-sw/rocm/rocm-6.2.4/include/rccl #-D__HIP_PLATFORM_AMD__ 
+LDFLAGS = -lm -L /opt/cray/pe/mpich/8.1.28/ofi/amd/5.0/lib -lmpi -L${ROCM_PATH}/lib  
+
+PARALLEL = TRUE
+

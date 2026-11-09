@@ -1,0 +1,26 @@
+var struct_output =
+[
+    [ "cgs", "struct_output.html#ad66d974fe8e05f5af6fb9417f911dc2d", null ],
+    [ "dclock", "struct_output.html#adc5f76f6c4958b400bc99979ef7f057c", null ],
+    [ "dir", "struct_output.html#a04f93ad5d49861d766743a19a44b2797", null ],
+    [ "dn", "struct_output.html#ab041e682d67997e74d2791fef77b32ff", null ],
+    [ "dt", "struct_output.html#a81ed7667cf110b90be3d9afd23d4f955", null ],
+    [ "dump_var", "struct_output.html#abce3795d6a8972a8a1031014950ef282", null ],
+    [ "ext", "struct_output.html#af2e3d8df92979a817dfd3a934d7d8cd8", null ],
+    [ "field_dim", "struct_output.html#acfa926155ecf926680f112b4bc14a71f", null ],
+    [ "fill", "struct_output.html#acf6a0e91712adf8619867324e5473be6", null ],
+    [ "mode", "struct_output.html#acb3dfa2e2b09a17e9e0adc76737c39f3", null ],
+    [ "nfile", "struct_output.html#a1c8b9f6f3c783f72ff7106120d41602b", null ],
+    [ "nfileParticles", "struct_output.html#ac4886c26f5ce0eb9931c4beb47781e3e", null ],
+    [ "nvar", "struct_output.html#acb7bad7347e7073076de79e740d6d3af", null ],
+    [ "stag_var", "struct_output.html#ab613e6e3fadde0546ea9f93b7c410a12", null ],
+    [ "type", "struct_output.html#ad07c45ab392d30e64fb4ed6506a7d5f6", null ],
+    [ "user_var", "struct_output.html#a6c1944ef73c45d87280087909abe8f77", null ],
+    [ "var_name", "struct_output.html#a0483e08d88f91f0e1aa4d49ce3968d51", null ],
+    [ "Vary3D", "struct_output.html#a858c38e503f217797d9a1a0213f81e80", null ],
+    [ "Vary4D", "struct_output.html#a282eb03ee4397553a8cc2cb79a1f301b", null ],
+    [ "Vc_buf", "struct_output.html#ae27c247e888710fddb0c1d3e85f0fa97", null ],
+    [ "Vc_buf_AL", "struct_output.html#a785fac7d9d8a0af52eb2c981e08ecc53", null ],
+    [ "Vs_buf", "struct_output.html#ace0872d9582feccae49eba780df22c97", null ],
+    [ "Vs_buf_AL", "struct_output.html#a6eaf78632946f6c785bcc6e1adff5eba", null ]
+];

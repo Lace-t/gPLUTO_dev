@@ -1,0 +1,26 @@
+Compling the Code:
+==================
+
+In order to compile the code simply type "make" at the command prompt.
+
+Running the Code:
+=================
+
+Before running the code you need to set the two parameters which
+are found at the end of the initialization file "pluto.ini".
+See description in the header of init.cpp.
+
+Once you've set them, type "./pluto" at the command prompt.
+
+Visualizing the data:
+=====================
+
+Data can be visualized using Gnuplot, IDL or Python.
+With Gnuplot,a  script "khi.gp" can be used to produce an animation 
+throughout the simulation data.
+The variable to be visualized together with its name can be set under the
+section "Plot Specifications".
+Variable names (rho, prs, vx1, ...) are listed inside "pluto.gp".
+
+
+

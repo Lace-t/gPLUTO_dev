@@ -1,0 +1,3 @@
+CC      = c++
+CFLAGS  = -c -O0 -ggdb3
+LDFLAGS = -lm

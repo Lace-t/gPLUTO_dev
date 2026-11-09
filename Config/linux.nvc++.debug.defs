@@ -1,0 +1,7 @@
+# ------------------------------------------
+# Compile with nvc compiler (no GPU support)
+# ------------------------------------------
+
+CC      = nvc++
+CFLAGS  = -c -g -O3
+LDFLAGS = -lm

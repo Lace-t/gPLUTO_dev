@@ -1,0 +1,38 @@
+# --------------------------------------------
+# Compile with nvc++ compiler (with GPU support)
+# Serial version
+# --------------------------------------------
+CC      = nvc++
+
+DIAG_SUPPRESS_FLAGS = \
+    --diag_suppress=set_but_not_used \
+    --diag_suppress=code_is_unreachable \
+    --diag_suppress=initialization_not_reachable \
+    --diag_suppress=white_space_inside_splice \
+    --diag_suppress=declared_but_not_referenced
+
+# Use the managed spelling supported by both older and newer NVHPC SDKs.
+# Leave architecture selection to the compiler by default. For cross-builds:
+#   make GPU_ARCH=cc80            # A100
+#   make GPU_ARCH=cc86            # RTX 3090 Ti
+#   make GPU_ARCH=cc80,cc86        # Multiple targets supported by this SDK
+GPU_ARCH ?=
+NVHPC_GPU_FLAGS = -gpu=rdc,managed $(if $(strip $(GPU_ARCH)),-gpu=$(GPU_ARCH))
+
+CFLAGS  = -c -acc -std=c++17 $(NVHPC_GPU_FLAGS) -Minline=1000 -O3 $(DIAG_SUPPRESS_FLAGS)
+LDFLAGS = -lm -acc $(NVHPC_GPU_FLAGS) -cudalib=nccl -lnccl
+
+
+PARALLEL = FALSE
+USE_HDF5 = FALSE
+
+#######################################
+#    HDF5 library options
+#######################################
+
+ifeq ($(strip $(USE_HDF5)), TRUE)
+# https://www.hdfgroup.org/download-hdf5/ #
+ HDF5_LIB = /HDF_Group/HDF5/1.14.6
+ INCLUDE_DIRS += -I$(HDF5_LIB)/include
+ LDFLAGS      += -L$(HDF5_LIB)/lib -lhdf5 -lz
+endif

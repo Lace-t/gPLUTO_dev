@@ -1,0 +1,28 @@
+var searchData=
+[
+  ['fallback_5ftrigger',['Fallback_Trigger',['../fallback_8cpp.html#a36d3dcb982e88ea47657dfe47110d5c5',1,'fallback.cpp']]],
+  ['fargo_5faveragevelocity',['FARGO_AverageVelocity',['../fargo_8hpp.html#a98a933b074e692738a0a66a165c4382f',1,'FARGO_AverageVelocity(Data *, Grid *):&#160;fargo_velocity.cpp'],['../fargo__velocity_8cpp.html#ae402a434bab06a3a831e86f757ca5b95',1,'FARGO_AverageVelocity(Data *data, Grid *grid):&#160;fargo_velocity.cpp']]],
+  ['fargo_5fcomputeresidualvelocity',['FARGO_ComputeResidualVelocity',['../fargo_8hpp.html#a637cafe6f3aadb07c6abc26ba5eb0ea9',1,'FARGO_ComputeResidualVelocity(const Data *, double ***, Grid *):&#160;fargo_velocity.cpp'],['../fargo__velocity_8cpp.html#a15e63a6fc620bc2fb60977bd0b734836',1,'FARGO_ComputeResidualVelocity(const Data *data, double ***vres, Grid *grid):&#160;fargo_velocity.cpp']]],
+  ['fargo_5fcomputetotalvelocity',['FARGO_ComputeTotalVelocity',['../fargo__velocity_8cpp.html#ae14234ae288db6463e9135f4fffb2176',1,'fargo_velocity.cpp']]],
+  ['fargo_5fflux',['FARGO_Flux',['../fargo_8cpp.html#a043444cc924c55c075ecfc47a104215d',1,'fargo.cpp']]],
+  ['fargo_5finitialize',['FARGO_Initialize',['../fargo_8hpp.html#ab30243e095376cc9e86fd85dc34977ec',1,'FARGO_Initialize(Grid *):&#160;fargo_velocity.cpp'],['../fargo__velocity_8cpp.html#a608e5bf135a8988426dc54b7d3b06d77',1,'FARGO_Initialize(Grid *grid):&#160;fargo_velocity.cpp']]],
+  ['fargo_5frestart',['FARGO_Restart',['../fargo_8hpp.html#a599d3cb737cac7195e149831ad665100',1,'FARGO_Restart(const Data *, char *, int, int, Grid *):&#160;fargo_io.cpp'],['../fargo__io_8cpp.html#a0ebd4d0eb3cd901e5036afd4c83c1d98',1,'FARGO_Restart(const Data *data, char *dir, int nfile, int swap_endian, Grid *grid):&#160;fargo_io.cpp']]],
+  ['fargo_5fshiftsolution',['FARGO_ShiftSolution',['../fargo_8cpp.html#a7dc5de17c7ed2f925c75599611cce884',1,'FARGO_ShiftSolution(Data *data, Ary4D &amp;U, Ary3D(&amp;Us)[6], Grid *grid, RunConfig &amp;run_config, double dt):&#160;fargo.cpp'],['../fargo_8hpp.html#a4427433cc72c1999c77c5025ccc083ff',1,'FARGO_ShiftSolution(Data *, Ary4D &amp;, Ary3D(&amp;Us)[6], Grid *, RunConfig &amp;, double):&#160;fargo.cpp']]],
+  ['fargo_5fsource',['FARGO_Source',['../fargo_8hpp.html#a0cfc81a176ccf69bf5257f01a7a85532',1,'FARGO_Source(Ary4D &amp;, Ary3D(&amp;Us)[6], double, Grid *):&#160;fargo_source.cpp'],['../fargo__source_8cpp.html#ad72d9ec117d6b82ec383dd71fcdcbbd8',1,'FARGO_Source(Ary4D &amp;UU, Ary3D(&amp;Vs)[6], double dt, Grid *grid):&#160;fargo_source.cpp']]],
+  ['fargo_5fvelocity',['FARGO_Velocity',['../fargo_8hpp.html#ae93f298bd8cb24b4369b4e860b13cbf6',1,'FARGO_Velocity(void):&#160;fargo_velocity.cpp'],['../fargo__velocity_8cpp.html#ae93f298bd8cb24b4369b4e860b13cbf6',1,'FARGO_Velocity(void):&#160;fargo_velocity.cpp']]],
+  ['fileclose',['FileClose',['../bin__io_8cpp.html#a9d6ae36d67088fb0021a3f1bac9503ac',1,'bin_io.cpp']]],
+  ['filedelete',['FileDelete',['../bin__io_8cpp.html#acf0b8468fb195bb0da471ee1435f8090',1,'bin_io.cpp']]],
+  ['fileopen',['FileOpen',['../bin__io_8cpp.html#a8e65248162662958ff7d62983cc77368',1,'bin_io.cpp']]],
+  ['filereaddata',['FileReadData',['../bin__io_8cpp.html#a879544b3734d5244917f97b8c3ac82d9',1,'bin_io.cpp']]],
+  ['filereaddata_5fal',['FileReadData_AL',['../bin__io_8cpp.html#af5640e20d33fec2e87e2fcb42a6e1751',1,'bin_io.cpp']]],
+  ['filewritearray',['FileWriteArray',['../bin__io_8cpp.html#a076107428666c077883c8280034fab6c',1,'bin_io.cpp']]],
+  ['filewritedata',['FileWriteData',['../bin__io_8cpp.html#a223614965fcd62f3603431e526330703',1,'bin_io.cpp']]],
+  ['filewritedata_5fal',['FileWriteData_AL',['../bin__io_8cpp.html#acc0dcfacc536a6458696d83e3537f3ca',1,'bin_io.cpp']]],
+  ['filewriteheader',['FileWriteHeader',['../bin__io_8cpp.html#ab5d783f44f739dd02e4bfd14eb90055f',1,'FileWriteHeader(char *buffer, char fname[], int mode):&#160;bin_io.cpp'],['../particles__write__bin_8cpp.html#ab73c5a411951305773f7370846c3679f',1,'FileWriteHeader(const std::string &amp;headerData, const std::string &amp;filePath, int mode):&#160;particles_write_bin.cpp']]],
+  ['filloutputbuffer',['FillOutputBuffer',['../write__data_8cpp.html#a75796dad336313ec888743032c3f381f',1,'write_data.cpp']]],
+  ['filloutputbuffer_5fal',['FillOutputBuffer_AL',['../write__data_8cpp.html#a7e56cb4266acf8e6b988324db1448397',1,'write_data.cpp']]],
+  ['flagboundary',['FlagBoundary',['../flag__boundary_8cpp.html#ad4bc83f4ebee15fd001a468fd71b51dc',1,'flag_boundary.cpp']]],
+  ['flagshock',['FlagShock',['../_src_2flag__shock_8cpp.html#a2047abce1438f439f4639f0ec0b4708f',1,'FlagShock(Data *data, Grid *grid, RBox *box):&#160;flag_shock.cpp'],['../_test___problems_2_r_m_h_d_2_jet_2flag__shock_8cpp.html#a2047abce1438f439f4639f0ec0b4708f',1,'FlagShock(Data *data, Grid *grid, RBox *box):&#160;flag_shock.cpp']]],
+  ['flagshow',['FlagShow',['../debug__tools_8cpp.html#adc0f9ad0932e07e6ea5b3386248d50cd',1,'debug_tools.cpp']]],
+  ['flipsign',['FlipSign',['../boundary_8cpp.html#ab6568d0d7cf8bdce19cb4cde1036830f',1,'FlipSign(int side, int type, int *vsign):&#160;boundary.cpp'],['../high__order_8hpp.html#aa4ac8e2a2c5749634c201e8c8701d248',1,'FlipSign(int, int, int *):&#160;boundary.cpp']]]
+];

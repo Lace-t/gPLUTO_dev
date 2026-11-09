@@ -1,0 +1,11 @@
+# --------------------------------------------
+# Compile with nvc compiler (with GPU support)
+# OpenMP version
+# --------------------------------------------
+CC = ${ROCM_PATH}/llvm/bin/clang++
+CFLAGS = -c -O3 -std=c++17 -D_USE_ROCTX  -I ${ROCM_PATH}/include #/appl/lumi/SW/LUMI-24.03/G/EB/rocm/6.2.2/include #--ggdb
+
+LDFLAGS = -lm -L${ROCM_PATH}/lib -lroctx64
+
+PARALLEL = FALSE
+

@@ -1,0 +1,28 @@
+CURRENT RELEASE: gPLUTO 0.89 (Dec 2025)
+
+************************************************************************
+This is the 2nd beta release of the gPLUTO code, a full C++ rewrite 
+of the PLUTO code, and capable of running on both multiple CPUs and GPUs. 
+
+Algorithms not supported or in development stage:
+
+-  Adaptive Mesh refinement (development)
+-  Cooling                  (development)
+-  CHARACTERISTIC_TRACING   (not supported)
+-  HANCOCK                  (not supported)
+-  SHEARINGBOX              (not supported)
+-  FINITE DIFFERENCE        (not supported)
+
+Main notation differences:
+
+- Staggered arrays start from zero ("i" means "i-1/2" instead of "i+1/2");
+- Reduced usage of global variables, replaced with the RunConfig 
+  structure;
+- Grid definition in [pluto.ini] has changed;
+- Global coordinate indices IBEG, IEND, JBEG, JEND have been removed and replaced by 
+  extensive usage of RBox structures;
+- Limiter is unique for all variables;
+- CYLINDRICAL Geometry can be used for both (r,phi) or (r,z).
+  For the latter simply set DIMENSIONS == 3 and set INCLUDE_JDIR to NO.
+************************************************************************
+

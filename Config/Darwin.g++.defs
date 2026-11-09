@@ -1,0 +1,20 @@
+# Config file for g++ 
+
+CC      = g++
+CFLAGS  = -c -O3 -std=c++17 
+
+LDFLAGS  = -lm
+USE_HDF5 = FALSE
+
+#######################################
+#    HDF5 library options
+#######################################
+
+ifeq ($(strip $(USE_HDF5)), TRUE)
+  HDF5_DIR      = /usr/local/opt/hdf5-mpi
+  HDF5_LIB      = $(HDF5_DIR)/lib
+  INCLUDE_DIRS += -I$(HDF5_DIR)/include
+  LDFLAGS      += -L$(HDF5_DIR)/lib \
+                  -lhdf5_cpp -lhdf5
+endif
+
