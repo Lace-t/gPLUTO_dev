@@ -281,7 +281,6 @@ MPI_Init(&argc, &argv);
   }
   
   if (cmd_line.write && (cmd_line.restart == NO && cmd_line.h5restart == NO)){
-    CheckForAnalysis (&data, &Dts, &runtime, &grid);
     CheckForOutput   (&data, &Dts, &runtime, tbeg, &grid);
   }
   nstep = g_stepNumber;
@@ -347,6 +346,7 @@ MPI_Init(&argc, &argv);
       CalculateGravAcceleration(&data, &grid, data.poisson_sol);
     #endif
 
+
     // ----------------------------------------------------
     // 6b. Check if this is the last integration step:
     //     - final tstop has been reached: adjust time step
@@ -376,7 +376,6 @@ MPI_Init(&argc, &argv);
     #endif
 
     if (!first_step && cmd_line.write) {
-      CheckForAnalysis (&data, &Dts, &runtime, &grid);
       if (!last_step) CheckForOutput  (&data, &Dts, &runtime, tbeg, &grid);
     }
 
@@ -395,6 +394,15 @@ MPI_Init(&argc, &argv);
       }
       #endif
     }
+
+
+    // Output/checkpoints precede state-changing Analysis. Run the analysis
+    // scheduler even on the first restart step and with -no-write.
+    CheckForAnalysis (&data, &Dts, &runtime, &grid);
+    // Analysis may shorten the step at a user event after the tstop check.
+    last_step = (Dts.time + Dts.dt >= runtime.tstop*(1.0 - 1.e-8));
+    if (g_stepNumber == cmd_line.maxsteps && cmd_line.maxsteps >= 0)
+      last_step = 1;
 
     // ----------------------------------------------------
     // 6d. Reset flag
@@ -686,11 +694,12 @@ void CheckForAnalysis (Data *data, timeStep *Dts, Runtime *runtime, Grid *grid)
 
   t     = Dts->time;
   tnext = t + Dts->dt;
-  check_dt = (int) (tnext/runtime->anl_dt) - (int)(t/runtime->anl_dt);
+  check_dt = runtime->anl_dt > 0.0 &&
+             (int)(tnext/runtime->anl_dt) != (int)(t/runtime->anl_dt);
   check_dt = check_dt || g_stepNumber == 0 || fabs(t - runtime->tstop) < 1.e-9;
   check_dt = check_dt && (runtime->anl_dt > 0.0);
 
-  check_dn = (g_stepNumber%runtime->anl_dn) == 0;
+  check_dn = runtime->anl_dn > 0 && (g_stepNumber%runtime->anl_dn) == 0;
   check_dn = check_dn && (runtime->anl_dn > 0);
 
   if (check_dt || check_dn) Analysis (data, grid);

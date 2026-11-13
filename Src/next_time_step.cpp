@@ -118,6 +118,10 @@ double NextTimeStep (timeStep *Dts, RunConfig *run_config,
   // 5. Limit time step variations
   // ------------------------------------------------------
 
+  // Keep every physical constraint computed above, independently of GLM.
+  // User events can undo event-only shortening without bypassing this bound.
+  Dts->dt_physics = dt_new;
+
   dt_new = MIN(dt_new, runtime->cfl_max_var*Dts->dt);    
   // #pragma acc update device(Dts)
   // #pragma omp target update to(Dts)    

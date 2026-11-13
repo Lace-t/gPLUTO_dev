@@ -58,6 +58,10 @@ void UpdateStage (Data *data, Ary4D &dUc, Ary3D (&dUs)[6], Grid *grid,
                   timeStep *Dts, RBox *box, double dt, bool pcp_flux_possible)
 {
   mynvtxstart_("US",RED);
+#if PHYSICS == RMHD && PCP_FOFC == YES
+  fofc_cache::RHSTarget rhs_target_scope(dUc);
+  const bool rhs_fused = fofc_cache::rhs_target != nullptr;
+#endif
   int nv, i, j, k;
   int ni, nj;
   int ntr = 0;  // Default number of transverse zones 
@@ -99,23 +103,38 @@ void UpdateStage (Data *data, Ary4D &dUc, Ary3D (&dUs)[6], Grid *grid,
 
   // 1a. Copy 3D arrays into 1D buffers
 
+#if PHYSICS == RMHD && PCP_FOFC == YES
+  if(!(fofc_cache::stream_enabled() && fofc_cache::pass>0))
+#endif
   DataToSweep<IDIR>(data, grid, &sweep_box);
 
   // 1b. Reconstruct and compute x1-flux      
 
+  mynvtxstart_("RiemannSolver#1",SILVER);
+#if PHYSICS == RMHD && PCP_FOFC == YES
+  if (fofc_cache::restore()) {
+    fofc_cache::transfer(data, Dts, grid, &sweep_box, IDIR, false);
+  } else
+#endif
+  {
   if (data->use_flat) ReconstructFlat<IDIR> (data, grid, &sweep_box);
   else                Reconstruct<IDIR>     (data, grid, &sweep_box);
 
   // 1c. Obtain flux (hyperbolic + parabolic) at i+1/2 interfaces
 
-  mynvtxstart_("RiemannSolver#1",SILVER);
   #if PHYSICS == RMHD && PCP_NR == YES
   RMHD_PCP_LimitFaces(data, grid, &sweep_box, IDIR);
   #endif
   data->fluidRiemannSolver(data, Dts, grid, &sweep_box, IDIR);
+
+#if PHYSICS == RMHD && PCP_FOFC == YES
+    if (fofc_cache::save())
+      fofc_cache::transfer(data, Dts, grid, &sweep_box, IDIR, true);
+#endif
+  }
   #if PHYSICS == RMHD && PCP_FOFC == YES
   if (pcp_flux_possible) {
-    RMHD_PCP_Flux(data, Dts, grid, &sweep_box, IDIR);
+    PCP_LF_Solver(data, Dts, grid, &sweep_box, IDIR);
   }
   #endif
   #if RESISTIVITY == EXPLICIT
@@ -137,12 +156,20 @@ void UpdateStage (Data *data, Ary4D &dUc, Ary3D (&dUs)[6], Grid *grid,
 
   // 1e. Compute right hand side for x1-dir.
 
+#if PHYSICS == RMHD && PCP_FOFC == YES
+  if (rhs_fused) RightHandSideFused(data,Dts,grid,dt,box,IDIR,dUc);
+  else
+#endif
   RightHandSide (data, Dts, grid, dt, box, IDIR);
 
   #if (PHYSICS == GRMHD && GR_METRIC != CARTESIAN) 
   RightHandSideSource(data, grid, dt, box, IDIR);
   #endif
 
+#if PHYSICS == RMHD && PCP_FOFC == YES
+  if (!rhs_fused)
+#endif
+  {
   #pragma acc parallel loop collapse(4) present(data, dUc)
   #pragma omp target teams distribute parallel for collapse(4)  map(to: data[:1],dUc)
   NFLUID_LOOP(nv){
@@ -155,6 +182,7 @@ void UpdateStage (Data *data, Ary4D &dUc, Ary3D (&dUs)[6], Grid *grid,
 
     dUc(i,j,k,nv) = rhs(i,nv);
   }}}}
+  }
   #pragma acc exit data delete(sweep_box)
   #pragma omp target exit data map(delete:sweep_box)
 
@@ -174,23 +202,38 @@ void UpdateStage (Data *data, Ary4D &dUc, Ary3D (&dUs)[6], Grid *grid,
 
   // 2a. Copy 3D arrays into 1D buffers
 
+#if PHYSICS == RMHD && PCP_FOFC == YES
+  if(!(fofc_cache::stream_enabled() && fofc_cache::pass>0))
+#endif
   DataToSweep<JDIR>(data, grid, &sweep_box);
 
   // 2b. Reconstruct and compute x2-flux
 
-   if (data->use_flat) ReconstructFlat<JDIR> (data, grid, &sweep_box);
+   mynvtxstart_("RiemannSolver#2",SILVER);
+#if PHYSICS == RMHD && PCP_FOFC == YES
+  if (fofc_cache::restore()) {
+    fofc_cache::transfer(data, Dts, grid, &sweep_box, JDIR, false);
+  } else
+#endif
+  {
+  if (data->use_flat) ReconstructFlat<JDIR> (data, grid, &sweep_box);
   else                Reconstruct<JDIR>     (data, grid, &sweep_box);
 
   // 2c. Obtain flux (hyperbolic + parabolic) at j+1/2 interfaces
 
-  mynvtxstart_("RiemannSolver#2",SILVER);
   #if PHYSICS == RMHD && PCP_NR == YES
   RMHD_PCP_LimitFaces(data, grid, &sweep_box, JDIR);
   #endif
   data->fluidRiemannSolver(data, Dts, grid, &sweep_box, JDIR);
+
+#if PHYSICS == RMHD && PCP_FOFC == YES
+    if (fofc_cache::save())
+      fofc_cache::transfer(data, Dts, grid, &sweep_box, JDIR, true);
+#endif
+  }
   #if PHYSICS == RMHD && PCP_FOFC == YES
   if (pcp_flux_possible) {
-    RMHD_PCP_Flux(data, Dts, grid, &sweep_box, JDIR);
+    PCP_LF_Solver(data, Dts, grid, &sweep_box, JDIR);
   }
   #endif
   #if RESISTIVITY == EXPLICIT
@@ -212,12 +255,20 @@ void UpdateStage (Data *data, Ary4D &dUc, Ary3D (&dUs)[6], Grid *grid,
 
   // 2e. Compute right hand side for x2-dir
 
+#if PHYSICS == RMHD && PCP_FOFC == YES
+  if (rhs_fused) RightHandSideFused(data,Dts,grid,dt,box,JDIR,dUc);
+  else
+#endif
   RightHandSide (data, Dts, grid, dt, box, JDIR);
 
   #if (PHYSICS == GRMHD && GR_METRIC != CARTESIAN) 
   RightHandSideSource(data, grid, dt, box, JDIR);
   #endif
   
+#if PHYSICS == RMHD && PCP_FOFC == YES
+  if (!rhs_fused)
+#endif
+  {
   #pragma acc parallel loop collapse(4) present(data, dUc)
   #pragma omp target teams distribute parallel for collapse(4) map(to: data[:1],dUc)
   NFLUID_LOOP(nv){
@@ -231,6 +282,7 @@ void UpdateStage (Data *data, Ary4D &dUc, Ary3D (&dUs)[6], Grid *grid,
 
     dUc(i,j,k,nv) += rhs(j,nv);
   }}}}
+  }
   #pragma acc exit data delete(sweep_box)
   #pragma omp target exit data map(delete:sweep_box)
 
@@ -252,23 +304,38 @@ void UpdateStage (Data *data, Ary4D &dUc, Ary3D (&dUs)[6], Grid *grid,
 
   // 3a. Copy 3D array into 1D buffers
 
+#if PHYSICS == RMHD && PCP_FOFC == YES
+  if(!(fofc_cache::stream_enabled() && fofc_cache::pass>0))
+#endif
   DataToSweep<KDIR>(data, grid, &sweep_box);
 
   // 3b. Reconstruct and compute x3-flux
 
+  mynvtxstart_("RiemannSolver#3",SILVER);
+#if PHYSICS == RMHD && PCP_FOFC == YES
+  if (fofc_cache::restore()) {
+    fofc_cache::transfer(data, Dts, grid, &sweep_box, KDIR, false);
+  } else
+#endif
+  {
   if (data->use_flat) ReconstructFlat<KDIR> (data, grid, &sweep_box);
   else                Reconstruct<KDIR>     (data, grid, &sweep_box);
 
   // 3c. Obtain flux (hyperbolic + parabolic) at k+1/2 interfaces
 
-  mynvtxstart_("RiemannSolver#3",SILVER);
   #if PHYSICS == RMHD && PCP_NR == YES
   RMHD_PCP_LimitFaces(data, grid, &sweep_box, KDIR);
   #endif
   data->fluidRiemannSolver(data, Dts, grid, &sweep_box, KDIR);
+
+#if PHYSICS == RMHD && PCP_FOFC == YES
+    if (fofc_cache::save())
+      fofc_cache::transfer(data, Dts, grid, &sweep_box, KDIR, true);
+#endif
+  }
   #if PHYSICS == RMHD && PCP_FOFC == YES
   if (pcp_flux_possible) {
-    RMHD_PCP_Flux(data, Dts, grid, &sweep_box, KDIR);
+    PCP_LF_Solver(data, Dts, grid, &sweep_box, KDIR);
   }
   #endif
   #if RESISTIVITY == EXPLICIT
@@ -290,7 +357,15 @@ void UpdateStage (Data *data, Ary4D &dUc, Ary3D (&dUs)[6], Grid *grid,
 
   // 3e. Compute right hand side for x3-dir
 
+#if PHYSICS == RMHD && PCP_FOFC == YES
+  if (rhs_fused) RightHandSideFused(data,Dts,grid,dt,box,KDIR,dUc);
+  else
+#endif
   RightHandSide (data, Dts, grid, dt, box, KDIR);
+#if PHYSICS == RMHD && PCP_FOFC == YES
+  if (!rhs_fused)
+#endif
+  {
   #pragma acc parallel loop collapse(4) present(data, dUc)
   #pragma omp target teams distribute parallel for collapse(4) map(to: data[:1],dUc)
   NFLUID_LOOP(nv){
@@ -303,6 +378,7 @@ void UpdateStage (Data *data, Ary4D &dUc, Ary3D (&dUs)[6], Grid *grid,
    
     dUc(i,j,k,nv) += rhs(k,nv);
   }}}}
+  }
   #pragma acc exit data delete(sweep_box)
   #pragma omp target exit data map(delete:sweep_box)
 #endif // INCLUDE_KDIR

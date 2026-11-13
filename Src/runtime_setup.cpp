@@ -11,6 +11,7 @@
 */
 ////////////////////////////////////////////////////////////////////////
 #include "gpluto.hpp"
+#include "grid_input.hpp"
 
 #define NOPT      32              //  # of possible options in a menu 
 #define NLEN      128             //  # default string length         
@@ -73,16 +74,19 @@ int RuntimeSetup (Runtime *runtime, cmdLine *cmd_line, char *ini_file)
   for (idim = 0; idim < 3; idim++){
     runtime->npoint[idim] = 1;
 
-    ipos = 0;
-    runtime->xbeg[idim]   = atof(ParamFileGet(glabel[idim], ++ipos));
-    runtime->npoint[idim] = atoi(ParamFileGet(glabel[idim], ++ipos));
+    try {
+      GridInput::Parse(ParamFileLine(glabel[idim]), runtime->grid_spec[idim],
+                       runtime->xbeg[idim],runtime->npoint[idim],runtime->xend[idim],include_dir[idim]!=FALSE);
+    } catch (const std::exception &error) {
+      QuitPLUTO(string(glabel[idim])+": "+error.what(),1);
+    }
 
-    runtime->xend[idim] = atof(ParamFileGet(glabel[idim], ++ipos));
-
+    if (include_dir[idim] == FALSE) runtime->grid_spec[idim].count=0;
     if ( include_dir[idim] == FALSE && runtime->npoint[idim] != 1 ) {
       printf ("! RuntimeSetup(): %d point(s) on dim. %d is NOT valid, resetting to 1\n",
               runtime->npoint[idim],idim+1);
       runtime->npoint[idim] = 1;
+      runtime->grid_spec[idim].count = 0;
     }
   }
 
@@ -113,6 +117,17 @@ int RuntimeSetup (Runtime *runtime, cmdLine *cmd_line, char *ini_file)
 
       if (!include_dir[idim]) continue;
 
+      if (runtime->grid_spec[idim].count) {
+        int total=0;
+        for (int p=0;p<runtime->grid_spec[idim].count;++p) {
+          int cells=runtime->grid_spec[idim].cells[p];
+          cells=MAX((int)(cells*rx),1);
+          runtime->grid_spec[idim].cells[p]=cells;
+          total+=cells;
+        }
+        runtime->npoint[idim]=total;
+        continue;
+      }
       dbl_var = (double)runtime->npoint[idim];
       runtime->npoint[idim] = MAX( (int)(dbl_var*rx), 1);
     }

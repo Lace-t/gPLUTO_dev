@@ -8,6 +8,7 @@
 */
 ////////////////////////////////////////////////////////////////////////
 #include "gpluto.hpp"
+#include "grid_input.hpp"
 
 ////////////////////////////////////////////////////////////////////////
 void SetGrid (Runtime *rtime, int *procs, Grid *grid, int cf)
@@ -96,6 +97,41 @@ void SetGrid (Runtime *rtime, int *procs, Grid *grid, int cf)
 
     xbeg[dir] = rtime->xbeg[dir];
     xend[dir] = rtime->xend[dir];
+
+    if (rtime->grid_spec[dir].count) {
+      std::vector<double> edges;
+      try { edges=GridInput::Edges(rtime->grid_spec[dir],cf); }
+      catch (const std::exception &error) {
+        QuitPLUTO(string("SetGrid(): ")+error.what(),1);
+      }
+      int count=grid->nint_glob[dir];
+      if (edges.size()!=size_t(count+1)) QuitPLUTO("SetGrid(): patch cell count mismatch",1);
+      double first=edges[1]-edges[0],last=edges[count]-edges[count-1];
+#if MAPPED_GRID == NO
+      for(int j=1;j<count;++j)
+        if(std::abs((edges[j+1]-edges[j])-first)>1.e-10*first)
+          QuitPLUTO("Nonuniform ini grid requires MAPPED_GRID=YES (no user MappedGrid function needed)",1);
+#endif
+      auto edge=[&](int j) {
+        if(j<0) return edges[0]+j*first;
+        if(j>count) return edges[count]+(j-count)*last;
+        return edges[j];
+      };
+      for(i=0;i<grid->ntot_glob[dir];++i) {
+        xL[i]=edge(i-gbeg); xR[i]=edge(i-gbeg+1);
+        dx[i]=xR[i]-xL[i]; xC[i]=.5*(xL[i]+xR[i]);
+      }
+#if MAPPED_GRID == YES
+      grid->dxi[dir]=1.0/count;
+      // Same metric discretization as the existing MappedGrid path.
+      for(i=0;i<grid->ntot_glob[dir];++i) {
+        double span=edge(i-gbeg+2)-edge(i-gbeg-1);
+        grid->dxi_dx_glob[dir][i]=24.0*grid->dxi[dir]/(27.0*dx[i]-span);
+      }
+#endif
+      print("> PLUTO-style grid [dir = %d, patches = %d]\n",dir,rtime->grid_spec[dir].count);
+      continue;
+    }
 
     // 2b. Mapped grid definition
 

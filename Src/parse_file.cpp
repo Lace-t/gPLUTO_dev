@@ -60,10 +60,10 @@ static int ParamFileGetWords(char *line, char **);
 ////////////////////////////////////////////////////////////////////////
 int ParamFileRead (char *fname)
 {
-  char  sline[512];
+  char  sline[4096];
   FILE *fp;
 
-  if (fline == NULL) fline = ARRAY_2D(128,128,char);
+  if (fline == NULL) fline = ARRAY_2D(128,4096,char);
 
   fp = fopen(fname,"r");
   if (fp == NULL) {
@@ -71,8 +71,10 @@ int ParamFileRead (char *fname)
   }
   nlines = 0;
 
-  while ( fgets(sline, 512, fp) != NULL ) {
+  while ( fgets(sline, sizeof(sline), fp) != NULL ) {
     if (strlen(sline) > 0) {
+      if (nlines>=128 || (strchr(sline,'\n')==nullptr && !feof(fp)))
+        QuitPLUTO("Parameter file exceeds 128 lines or 4095 characters per line",1);
       strcpy (fline[nlines],sline); 
       nlines++;
     }
@@ -170,7 +172,7 @@ int ParamFileHasBoth (const char *label1, const char *label2)
 int ParamExist (const char *label)
 {
   int    k;
-  char   sline[512], *str;
+  char   sline[4096], *str;
   const char  delimiters[] = " \t\r\f";
 
   // ---------------------------------------
@@ -197,7 +199,7 @@ int ParamExist (const char *label)
 int ParamFileGetWords(char *line, char **words) 
 {
   int nw, nwords = 0;
-  char *str, cstr[512];
+  char *str, cstr[4096];
   const char delimiters[] = " \t\r\f";
 
   // -- Make a local copy of 'line' since strtok will modify it -- 
@@ -206,6 +208,7 @@ int ParamFileGetWords(char *line, char **words)
 
   // -- Loop until end of line, copy and count words -- 
   while (str != NULL && str[0] != '\n') {
+    if(nwords>=128) QuitPLUTO("Too many fields in parameter line",1);
     strncpy(words[nwords], str, WORD_SIZE - 1);  // Prevent overflow
     words[nwords][WORD_SIZE - 1] = '\0';  // Ensure null-termination
     str = strtok(NULL, delimiters);
@@ -225,4 +228,17 @@ int ParamFileGetWords(char *line, char **words)
   }
 
   return nwords;
+}
+
+// Return a whole configuration line, for variable-length patch definitions.
+const char *ParamFileLine(const char *label) {
+  for (int k=0;k<nlines;++k) {
+    const char *start=fline[k];
+    while (*start==' ' || *start=='\t') ++start;
+    size_t length=strlen(label);
+    if (strncmp(start,label,length)==0 &&
+        (start[length]==' ' || start[length]=='\t')) return start;
+  }
+  QuitPLUTO(string("Missing configuration label: ")+label,1);
+  return nullptr;
 }

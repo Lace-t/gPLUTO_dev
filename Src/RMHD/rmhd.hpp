@@ -143,27 +143,34 @@ enum KWAVES {
 #ifndef PCP_NR
 #define PCP_NR NO
 #endif
+
 #ifndef PCP_FOFC
 #define PCP_FOFC NO
 #endif
+
 #ifndef PCP_PRESSURE_FIX
 #define PCP_PRESSURE_FIX YES
 #endif
+
 // Energy admission distance: factor * DBL_EPSILON * max(1, abs(E)).
 // Kept separate from the checker cancellation band and density floor.
 #ifndef PCP_ADMISSIBILITY_EPS_FACTOR
 #define PCP_ADMISSIBILITY_EPS_FACTOR 256.0
 #endif
+
 // Relative retreat toward the fixed-B anchor after a limiter repair.
 #ifndef PCP_LIMIT_BACKOFF
 #define PCP_LIMIT_BACKOFF 1.e-6
 #endif
+
 #ifndef PCP_STAGE_LOCAL_PASSES
 #define PCP_STAGE_LOCAL_PASSES 4
 #endif
+
 #ifndef CT_RMHD_CONSISTENT
 #define CT_RMHD_CONSISTENT NO
 #endif
+
 #define FLAG_PCP_FOFC (1u << 29)
 #define FLAG_PCP_CT_FAIL (1u << 30)
 #if PCP_STAGE_LOCAL_PASSES < 1
@@ -177,18 +184,22 @@ enum KWAVES {
 #if (TIME_STEPPING != RK2 && TIME_STEPPING != RK3) || defined(HIGH_ORDER) || RADIATION || defined(FARGO) || RING_AVERAGE > 1
 #error "PCP RunStage supports FV RK2/RK3 without radiation/FARGO/ring average"
 #endif
+
 // Stage-local retries leave particle/module scheduling in rk_step. Whole-step
 // retries require additional state beyond U/V/B for these coupled modules.
 #if FALLBACK_MODE == FALLBACK_RECOMPUTE && ((PARTICLES != NO) || (COOLING != NO))
 #error "Enhanced RMHD FALLBACK_RECOMPUTE needs particle/cooling rollback"
 #endif
+
 #if FALLBACK_MODE == FALLBACK_BLENDING
 #error "PCP stage recovery requires FALLBACK_MODE=NO or FALLBACK_RECOMPUTE"
 #endif
+
 #endif
 #if CT_RMHD_CONSISTENT && (EOS != IDEAL || ENTROPY_SWITCH || RADIATION)
 #error "CT_RMHD_CONSISTENT requires ideal EOS without entropy/radiation"
 #endif
+
 #pragma omp declare target
 #pragma acc routine seq
 int RMHD_PCP_Check(const double *);
@@ -204,7 +215,10 @@ int RMHD_PCP_Recover(double *, double *, RunConfig &, int);
 int CT_RMHD_CorrectCell(double *, double *, const double *, RunConfig &);
 #pragma omp end declare target
 void RMHD_PCP_LimitFaces(Data *, Grid *, RBox *, int);
-void RMHD_PCP_Flux(Data *, timeStep *, Grid *, RBox *, int);
+#if PCP_FOFC == YES
+// FOFC specialization of the shared LF kernel in tvdlf.cpp.
+void PCP_LF_Solver(Data *, timeStep *, Grid *, RBox *, int);
+#endif
 void RMHD_PCP_SetStageTime(Data *, timeStep *, int);
 uint32_t RMHD_PCP_FinishStage(Data *, Grid *, RBox *);
 uint32_t RMHD_PCP_RunStage(Data *, timeStep *, double, const Ary4D &,
@@ -882,3 +896,59 @@ inline void OrthoToCons (Ary2D &flux, const int i, Metric &metric)
   #endif
 }
 #endif // GEOMETRY != CARTESIAN
+
+////////////////////////////////////////////////////////////////////////
+// FOFC stage cache. PCP_FOFC owns the interface; the backend owns storage.
+////////////////////////////////////////////////////////////////////////
+#if PCP_FOFC == YES
+namespace fofc_cache {
+extern bool active;
+extern int pass;
+extern Ary4D *rhs_target;
+
+// Unsupported configurations keep the original reconstruction/recovery path.
+// These are implementation limits, not additional algorithm switches.
+inline constexpr bool reusable() {
+#if defined(_OPENACC)
+#if GEOMETRY == CARTESIAN && DIVB_CONTROL == DIV_CLEANING && \
+    !defined(HIGH_ORDER) && !RADIATION && RESISTIVITY == NO
+  return true;
+#else
+  return false;
+#endif
+#elif defined(_OPENMP) || defined(HIGH_ORDER)
+  return false;
+#else
+#if !(INTERNAL_BOUNDARY == YES && INTERNAL_BOUNDARY_REFLECT == YES) && \
+    !RADIATION && !SELF_GRAV
+  return true;
+#else
+  return false;
+#endif
+#endif
+}
+
+struct Stage {
+  Stage();
+  ~Stage();
+  Stage(const Stage &) = delete;
+  Stage &operator=(const Stage &) = delete;
+};
+struct RHSTarget {
+  explicit RHSTarget(Ary4D &u);
+  ~RHSTarget();
+  RHSTarget(const RHSTarget &) = delete;
+  RHSTarget &operator=(const RHSTarget &) = delete;
+private:
+  Ary4D *previous;
+};
+bool stream_enabled();
+bool rk_enabled();
+inline bool restore() { return active && pass > 0; }
+inline bool save() { return active && pass == 0; }
+void transfer(Data *data, timeStep *Dts, Grid *grid, RBox *box, int dir, bool save);
+}
+
+void RightHandSideFused(Data *data, timeStep *Dts, const Grid *const grid,
+                       double dt, RBox *box, int dir, const Ary4D &target);
+#endif

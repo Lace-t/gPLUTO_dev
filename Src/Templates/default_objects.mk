@@ -17,7 +17,7 @@ DEFAULT_OBJ = \
   timing.o tools.o write_data.o write_tab.o write_vtk.o \
   vector_curl.o userdef_output.o
 
-DEFAULT_HEADERS = Array.hpp definitions.hpp eos.hpp gpluto.hpp \
+DEFAULT_HEADERS = grid_spec.hpp grid_input.hpp Array.hpp definitions.hpp eos.hpp gpluto.hpp \
                   macros.hpp metric.hpp plm_coeffs.hpp prototypes.hpp \
                   states.hpp structs.hpp
 

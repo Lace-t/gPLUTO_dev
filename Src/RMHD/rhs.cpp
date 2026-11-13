@@ -122,8 +122,11 @@ inline void TensorSource(State &state, RunConfig& run_config, double T[][3])
   \param [in]      box   RBox on which rhs has to be computed
 */
 ////////////////////////////////////////////////////////////////////////
-void RightHandSide (Data *data, timeStep *Dts, const Grid * const grid, 
-                    double dt, RBox *box, const int dir)
+
+#define RHS_VALUE(index,n) (fused ? local_rhs[n] : rhs(index,n))
+template<bool fused>
+static void RightHandSideImpl(Data *data, timeStep *Dts, const Grid *const grid,
+                             double dt, RBox *box, int dir, const Ary4D &target)
  {
   int i, j, k, nv;
   int ni, nj;
@@ -242,7 +245,7 @@ void RightHandSide (Data *data, timeStep *Dts, const Grid * const grid,
     // ----------------------------------------------------
 
     #pragma omp target teams distribute parallel for collapse(3) 
-    #pragma acc parallel loop collapse(3) present(data, run_config, grid)
+    #pragma acc parallel loop collapse(3) present(data, run_config, grid, target)
     for (k = kbeg; k <= kend; k++){
     for (j = jbeg; j <= jend; j++){
     for (i = ibeg; i <= iend; i++){
@@ -260,6 +263,7 @@ void RightHandSide (Data *data, timeStep *Dts, const Grid * const grid,
       Ary2D vc(&data->sweep->vC[offset],ni,NVAR);
  
       double v[NVAR];
+      double local_rhs[NVAR];
       #if GEOMETRY != CARTESIAN
       double T[3][3];
       Metric metric;
@@ -279,13 +283,13 @@ void RightHandSide (Data *data, timeStep *Dts, const Grid * const grid,
       #if GEOMETRY == CARTESIAN         
         double dtdx1 = dt/dx1[i];
         #pragma acc loop seq
-        NVAR_LOOP(nv)  rhs(i,nv) = -dtdx1*(flux(i+1,nv) - flux(i,nv));
+        NVAR_LOOP(nv)  RHS_VALUE(i,nv) = -dtdx1*(flux(i+1,nv) - flux(i,nv));
 
       #else
 
         double dtdV = dt/grid->dV(i,j,k);
         #pragma acc loop seq
-        NVAR_LOOP(nv) rhs(i,nv) = -dtdV*(fA(i+1,nv) - fA(i,nv));
+        NVAR_LOOP(nv) RHS_VALUE(i,nv) = -dtdV*(fA(i+1,nv) - fA(i,nv));
 
       #endif
 
@@ -295,8 +299,8 @@ void RightHandSide (Data *data, timeStep *Dts, const Grid * const grid,
         double g[3];
         BodyForceVector(state, run_config, g);
 
-        rhs(i,MX1)   += dt*v[RHO]*g[IDIR];
-        IF_ENERGY (rhs(i,ENG) += dt*0.5*(flux(i+1,RHO) + flux(i,RHO))*g[IDIR];)
+        RHS_VALUE(i,MX1)   += dt*v[RHO]*g[IDIR];
+        IF_ENERGY (RHS_VALUE(i,ENG) += dt*0.5*(flux(i+1,RHO) + flux(i,RHO))*g[IDIR];)
       #endif
 
       // I2c. Add geometrical source terms
@@ -305,20 +309,20 @@ void RightHandSide (Data *data, timeStep *Dts, const Grid * const grid,
       {
         double r     = x1[i];
         TensorSource (state, run_config, T);
-        rhs(i,MX1) += dt*T[JDIR][JDIR]/r;
+        RHS_VALUE(i,MX1) += dt*T[JDIR][JDIR]/r;
         #if RADIATION
         {
           double Sr = EddTensor(v, FR2, FR2)*v[ENR];
-          rhs(i,FR1) += dt*Sr/r;
+          RHS_VALUE(i,FR1) += dt*Sr/r;
         }
         #endif
         #ifdef GLM_MHD
-        rhs(i,BX1) += dt*v[PSI_GLM]/r;
+        RHS_VALUE(i,BX1) += dt*v[PSI_GLM]/r;
         #endif
         #if PHYSICS == RMHD && (!COVARIANT_BX2)
         {
           double Ez = -(v[VX1]*v[BX2] - v[VX2]*v[BX1]); 
-          rhs(i,BX2) -= dt*Ez/r;
+          RHS_VALUE(i,BX2) -= dt*Ez/r;
         }
         #endif
       }
@@ -326,20 +330,20 @@ void RightHandSide (Data *data, timeStep *Dts, const Grid * const grid,
       {
         double r     = grid->rt[i]; // x1[i];
         TensorSource (state, run_config, T);
-        rhs(i,MX1) += dt*(T[JDIR][JDIR] + T[KDIR][KDIR])/r;
+        RHS_VALUE(i,MX1) += dt*(T[JDIR][JDIR] + T[KDIR][KDIR])/r;
         #if !INCLUDE_JDIR
-        rhs(i,MX1) -= dt*T[JDIR][IDIR]*grid->cot[j]/r;
+        RHS_VALUE(i,MX1) -= dt*T[JDIR][IDIR]*grid->cot[j]/r;
         #endif
 
         #if COVARIANT_MX2 == YES
-        rhs(i,MX2) += dt*T[KDIR][KDIR]*grid->cot[j];
+        RHS_VALUE(i,MX2) += dt*T[KDIR][KDIR]*grid->cot[j];
         #if !INCLUDE_JDIR
-        rhs(i,MX2) -= dt*T[JDIR][JDIR]*grid->cot[j];
+        RHS_VALUE(i,MX2) -= dt*T[JDIR][JDIR]*grid->cot[j];
         #endif
         #else
-        rhs(i,MX2) += dt*(T[KDIR][KDIR]*grid->cot[j] - T[JDIR][IDIR])/x1[i];
+        RHS_VALUE(i,MX2) += dt*(T[KDIR][KDIR]*grid->cot[j] - T[JDIR][IDIR])/x1[i];
         #if !INCLUDE_JDIR
-        rhs(i,MX2) -= dt*T[JDIR][JDIR]*grid->cot[j]/x1[i];
+        RHS_VALUE(i,MX2) -= dt*T[JDIR][JDIR]*grid->cot[j]/x1[i];
         #endif
         #endif
 
@@ -347,17 +351,17 @@ void RightHandSide (Data *data, timeStep *Dts, const Grid * const grid,
         {
           double Pthth = EddTensor(v, iFRTH,  iFRTH)  * v[ENR];
           double Pphph = EddTensor(v, iFRPHI, iFRPHI) * v[ENR];
-          rhs(i,iFRR) += dt*(Pthth + Pphph)/r;
+          RHS_VALUE(i,iFRR) += dt*(Pthth + Pphph)/r;
         }
         #endif
 
         #ifdef GLM_MHD
-          rhs(i,BX1) += dt*2.0*v[PSI_GLM]/r; 
+          RHS_VALUE(i,BX1) += dt*2.0*v[PSI_GLM]/r;
           #if INCLUDE_JDIR
           #if COVARIANT_BX2 
-          rhs(i,BX2) += dt*v[PSI_GLM]*grid->cot[j]/(r*x1[i]);
+          RHS_VALUE(i,BX2) += dt*v[PSI_GLM]*grid->cot[j]/(r*x1[i]);
           #else
-          rhs(i,BX2) += dt*v[PSI_GLM]*grid->cot[j]/r;
+          RHS_VALUE(i,BX2) += dt*v[PSI_GLM]*grid->cot[j]/r;
           #endif
           #endif
         #endif
@@ -365,7 +369,7 @@ void RightHandSide (Data *data, timeStep *Dts, const Grid * const grid,
         #if PHYSICS == RMHD && (!COVARIANT_BX2)
         {
           double Ez = -(v[VX1]*v[BX2] - v[VX2]*v[BX1]); 
-          rhs(i,BX2) -= dt*Ez/r;
+          RHS_VALUE(i,BX2) -= dt*Ez/r;
         }
         #endif
 
@@ -393,12 +397,16 @@ void RightHandSide (Data *data, timeStep *Dts, const Grid * const grid,
         #endif
         
         #pragma acc loop seq 
-        NFLX_LOOP(nv) rhs(i,nv) -= src[nv];   
+        NFLX_LOOP(nv) RHS_VALUE(i,nv) -= src[nv];
       #endif // INCLUDE_DIVB_SOURCE
 
       // I2h. Compute inverse time step 
 
       data->C_dt(i,j,k) = 0.5*(cmax(i) + cmax(i+1))/dx1[i];
+      if constexpr (fused) {
+        #pragma acc loop seq
+        NFLUID_LOOP(nv) target(i,j,k,nv) = local_rhs[nv];
+      }
     }}}
 
   }else if (dir == JDIR){
@@ -472,7 +480,7 @@ void RightHandSide (Data *data, timeStep *Dts, const Grid * const grid,
     // ----------------------------------------------------
 
     #pragma omp target teams distribute parallel for collapse(3)
-    #pragma acc parallel loop collapse(3) present(data, run_config, grid)
+    #pragma acc parallel loop collapse(3) present(data, run_config, grid, target)
     for (k = kbeg; k <= kend; k++){
     for (i = ibeg; i <= iend; i++){
     for (j = jbeg; j <= jend; j++){      
@@ -491,6 +499,7 @@ void RightHandSide (Data *data, timeStep *Dts, const Grid * const grid,
       Ary2D vc(&data->sweep->vC[offset],ni,NVAR);
 
       double v[NVAR];
+      double local_rhs[NVAR];
       State state;
       Metric metric;
       
@@ -509,13 +518,13 @@ void RightHandSide (Data *data, timeStep *Dts, const Grid * const grid,
       #if GEOMETRY == CARTESIAN
         double dtdx2 = dt/dx2[j];
         #pragma acc loop seq
-        NVAR_LOOP(nv) rhs(j,nv) = -dtdx2*(flux(j+1,nv) - flux(j,nv));
+        NVAR_LOOP(nv) RHS_VALUE(j,nv) = -dtdx2*(flux(j+1,nv) - flux(j,nv));
 
       #else
 
         double dtdV = dt/grid->dV(i,j,k);
         #pragma acc loop seq
-        NVAR_LOOP(nv) rhs(j,nv) = -dtdV*(fA(j+1,nv) - fA(j,nv));
+        NVAR_LOOP(nv) RHS_VALUE(j,nv) = -dtdV*(fA(j+1,nv) - fA(j,nv));
 
       #endif
 
@@ -525,8 +534,8 @@ void RightHandSide (Data *data, timeStep *Dts, const Grid * const grid,
       double g[3];
       BodyForceVector(state, run_config, g);
 
-      rhs(j,MX2) += dt*v[RHO]*g[JDIR];
-      IF_ENERGY(rhs(j,ENG) += dt*0.5*(flux(j+1,RHO) + flux(j,RHO))*g[JDIR];)
+      RHS_VALUE(j,MX2) += dt*v[RHO]*g[JDIR];
+      IF_ENERGY(RHS_VALUE(j,ENG) += dt*0.5*(flux(j+1,RHO) + flux(j,RHO))*g[JDIR];)
       #endif 
 
       // J2c. Add geometrical source terms
@@ -537,10 +546,10 @@ void RightHandSide (Data *data, timeStep *Dts, const Grid * const grid,
         double Pphph = EddTensor(v, iFRPHI, iFRPHI) * v[ENR];
 
         #if COVARIANT_MX2 == YES
-        rhs(j,iFRTH) += dt*Pphph*ct;
+        RHS_VALUE(j,iFRTH) += dt*Pphph*ct;
         #else
         double Prth = EddTensor(v, iFRR, iFRTH) * v[ENR];
-        rhs(j,iFRTH) += dt*(Pphph*ct - Prth)/x1[i];
+        RHS_VALUE(j,iFRTH) += dt*(Pphph*ct - Prth)/x1[i];
         #endif
       }
       #endif
@@ -565,7 +574,7 @@ void RightHandSide (Data *data, timeStep *Dts, const Grid * const grid,
         OrthoToCons(src, metric);
         #endif
         #pragma acc loop seq 
-        NFLX_LOOP(nv) rhs(j,nv) -= src[nv];   
+        NFLX_LOOP(nv) RHS_VALUE(j,nv) -= src[nv];
       #endif // INCLUDE_DIVB_SOURCE
 
       // J2f. Compute inverse time step 
@@ -575,6 +584,10 @@ void RightHandSide (Data *data, timeStep *Dts, const Grid * const grid,
       q = 1.0/grid->ring_av_csize[i];
       #endif
       data->C_dt(i,j,k) += q*0.5*(cmax(j) + cmax(j+1))/dl;
+      if constexpr (fused) {
+        #pragma acc loop seq
+        NFLUID_LOOP(nv) target(i,j,k,nv) += local_rhs[nv];
+      }
     }}}
 
   }else if (dir == KDIR){
@@ -648,7 +661,7 @@ void RightHandSide (Data *data, timeStep *Dts, const Grid * const grid,
     // ----------------------------------------------------
 
     #pragma omp target teams distribute parallel for collapse(3)
-    #pragma acc parallel loop collapse(3) present(data, run_config, grid)
+    #pragma acc parallel loop collapse(3) present(data, run_config, grid, target)
     for (j = jbeg; j <= jend; j++){
     for (i = ibeg; i <= iend; i++){
     for (k = kbeg; k <= kend; k++){
@@ -668,6 +681,7 @@ void RightHandSide (Data *data, timeStep *Dts, const Grid * const grid,
 
       double dtdx3 = dt/dx3[k];
       double v[NVAR];
+      double local_rhs[NVAR];
 
       State state;
       Metric metric;
@@ -687,20 +701,20 @@ void RightHandSide (Data *data, timeStep *Dts, const Grid * const grid,
       #if GEOMETRY == CARTESIAN
 
         #pragma acc loop seq
-        NVAR_LOOP(nv) rhs(k,nv) = -dtdx3*(flux(k+1,nv) - flux(k,nv));
+        NVAR_LOOP(nv) RHS_VALUE(k,nv) = -dtdx3*(flux(k+1,nv) - flux(k,nv));
 
       #else
       {
         double dtdV = dt/grid->dV(i,j,k);
         #pragma acc loop seq
-        NVAR_LOOP(nv) rhs(k,nv) = -dtdV*(fA(k+1,nv) - fA(k,nv));
+        NVAR_LOOP(nv) RHS_VALUE(k,nv) = -dtdV*(fA(k+1,nv) - fA(k,nv));
 
         #ifdef GLM_MHD
         #if GEOMETRY == SPHERICAL
         double inv_rgrad = dx2[j]/(grid->rt[i]*grid->dmu[j]);
-        rhs(k,BXn) = -dtdx3*inv_rgrad*(flux(k+1,BXn) - flux(k,BXn));
+        RHS_VALUE(k,BXn) = -dtdx3*inv_rgrad*(flux(k+1,BXn) - flux(k,BXn));
         #else
-        rhs(k,BXn) = -dtdx3*(flux(k+1,BXn) - flux(k,BXn));
+        RHS_VALUE(k,BXn) = -dtdx3*(flux(k+1,BXn) - flux(k,BXn));
         #endif
 
         #endif
@@ -713,8 +727,8 @@ void RightHandSide (Data *data, timeStep *Dts, const Grid * const grid,
       double g[3];
       BodyForceVector(state, run_config, g);
 
-      rhs(k,MX3) += dt*v[RHO]*g[KDIR];
-      IF_ENERGY(rhs(k,ENG) += dt*0.5*(flux(k+1,RHO) + flux(k,RHO))*g[KDIR];)
+      RHS_VALUE(k,MX3) += dt*v[RHO]*g[KDIR];
+      IF_ENERGY(RHS_VALUE(k,ENG) += dt*0.5*(flux(k+1,RHO) + flux(k,RHO))*g[KDIR];)
       #endif  // (BODY_FORCE & VECTOR) 
 
       // K2e. Add div(B) source terms
@@ -739,7 +753,7 @@ void RightHandSide (Data *data, timeStep *Dts, const Grid * const grid,
         #endif
 
         #pragma acc loop seq 
-        NFLX_LOOP(nv) rhs(k,nv) -= src[nv];   
+        NFLX_LOOP(nv) RHS_VALUE(k,nv) -= src[nv];
       #endif // INCLUDE_DIVB_SOURCE
 
       // K2f. Compute inverse time step
@@ -749,9 +763,34 @@ void RightHandSide (Data *data, timeStep *Dts, const Grid * const grid,
       q = 1.0/grid->ring_av_csize[j];
       #endif
       data->C_dt(i,j,k) += q*0.5*(cmax(k) + cmax(k+1))/dl;
+      if constexpr (fused) {
+        #pragma acc loop seq
+        NFLUID_LOOP(nv) target(i,j,k,nv) += local_rhs[nv];
+      }
     }}}
 
   }
 
 mynvtxstop_();
 }
+#undef RHS_VALUE
+
+// Preserve implicit CPU RHSTarget callers as well as the legacy sweep output.
+void RightHandSide(Data *data, timeStep *Dts, const Grid *const grid,
+                   double dt, RBox *box, const int dir)
+{
+#if PCP_FOFC == YES
+  if (fofc_cache::rhs_target) {
+    RightHandSideImpl<true>(data, Dts, grid, dt, box, dir, *fofc_cache::rhs_target);
+    return;
+  }
+#endif
+  RightHandSideImpl<false>(data, Dts, grid, dt, box, dir, data->Uc);
+}
+#if PCP_FOFC == YES
+void RightHandSideFused(Data *data, timeStep *Dts, const Grid *const grid,
+                       double dt, RBox *box, int dir, const Ary4D &target)
+{
+  RightHandSideImpl<true>(data, Dts, grid, dt, box, dir, target);
+}
+#endif

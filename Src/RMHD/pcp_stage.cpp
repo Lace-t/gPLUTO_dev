@@ -1,4 +1,277 @@
 #include "gpluto.hpp"
+#include <cstring>
+#if PCP_FOFC == YES
+#include <cstdlib>
+#include <cstdio>
+#include <cassert>
+#if !defined(_OPENACC) && !defined(_OPENMP)
+#include <vector>
+#include <algorithm>
+#endif
+
+namespace fofc_cache {
+bool active = false;
+int pass = 0;
+Ary4D *rhs_target = nullptr;
+
+Stage::Stage()
+{
+  assert(!active);
+#ifdef _OPENACC
+  const char *disable = "GPU_FOFC_CACHE_DISABLE";
+#else
+  const char *disable = "FOFC_CACHE_DISABLE";
+#endif
+  active = reusable() && std::getenv(disable) == nullptr;
+  pass = 0;
+}
+Stage::~Stage() { active = false; }
+
+bool stream_enabled()
+{
+#if defined(_OPENACC) || defined(_OPENMP)
+  return false;
+#else
+  return active && std::getenv("FOFC_STREAM_DISABLE") == nullptr;
+#endif
+}
+
+bool rk_enabled()
+{
+#ifdef STAGGERED_MHD
+  // CT must materialize U before averaging/correcting the staggered field.
+  return false;
+#else
+  return std::getenv("FOFC_RK_FUSE_DISABLE") == nullptr;
+#endif
+}
+
+RHSTarget::RHSTarget(Ary4D &u) : previous(rhs_target)
+{
+#ifdef _OPENACC
+  const bool enabled = reusable() && std::getenv("GPU_RHS_FUSE_DISABLE") == nullptr;
+#else
+  const bool enabled = active && std::getenv("FOFC_FUSE_DISABLE") == nullptr;
+#endif
+  rhs_target = enabled ? &u : nullptr;
+}
+RHSTarget::~RHSTarget() { rhs_target = previous; }
+
+#ifdef _OPENACC
+void transfer(Data *data, timeStep *Dts, Grid *grid, RBox *box, int dir, bool save)
+{
+  static double *storage[3] = {};
+  const long total = (long)grid->ntot[0] * grid->ntot[1] * grid->ntot[2];
+  const long count = total * (NVAR + 7);
+  if (!storage[dir]) {
+    storage[dir] = new double[count];
+    std::fprintf(stderr, "GPUCache rank=%d dir=%d bytes=%ld\n",
+                 g_rank, dir, count * (long)sizeof(double));
+  }
+  double *cache = storage[dir];
+  int ni, nj, ib, ie, jb, je, kb, ke;
+  ARRAY_STRIDES(grid, dir, ni, nj);
+  if      (dir == IDIR) RBoxPermuteIndices<IDIR>(box, ib, ie, jb, je, kb, ke);
+  else if (dir == JDIR) RBoxPermuteIndices<JDIR>(box, ib, ie, jb, je, kb, ke);
+  else                 RBoxPermuteIndices<KDIR>(box, ib, ie, jb, je, kb, ke);
+
+  // Preserve rounded center velocities over full reconstructed sweep rows.
+#pragma acc parallel loop collapse(3) present(data, Dts, cache[0:count])
+  for (int k = kb; k <= ke; ++k) {
+    for (int j = jb; j <= je; ++j) {
+      for (int i = 0; i < ni; ++i) {
+        const long row = (long)ni * (j + (long)nj * k);
+        const long q = row + i;
+#pragma acc loop seq
+        for (int n = 0; n < 3; ++n) {
+          const long at = NVAR * row + (long)ni * (VX1 + n) + i;
+          if (save) cache[(NVAR + 4 + n) * total + q] = data->sweep->vC[at];
+          else data->sweep->vC[at] = cache[(NVAR + 4 + n) * total + q];
+        }
+      }
+    }
+  }
+
+  // Save before LLF corrections; restore before applying the current mask.
+#pragma acc parallel loop collapse(3) present(data, Dts, cache[0:count])
+  for (int k = kb; k <= ke; ++k) {
+    for (int j = jb; j <= je; ++j) {
+      for (int i = ib; i <= ie + 1; ++i) {
+        const long row = (long)ni * (j + (long)nj * k);
+        const long q = row + i;
+#pragma acc loop seq
+        for (int n = 0; n < NVAR; ++n) {
+          const long at = NVAR * row + (long)ni * n + i;
+          if (save) cache[at] = data->sweep->flux[at];
+          else data->sweep->flux[at] = cache[at];
+        }
+        if (save) {
+          cache[NVAR * total + q]       = data->sweep->press[q];
+          cache[(NVAR + 1) * total + q] = data->sweep->Bn[q];
+          cache[(NVAR + 2) * total + q] = Dts->cmax[q];
+          cache[(NVAR + 3) * total + q] = data->sweep->PSIn[q];
+        } else {
+          data->sweep->press[q] = cache[NVAR * total + q];
+          data->sweep->Bn[q]    = cache[(NVAR + 1) * total + q];
+          Dts->cmax[q]          = cache[(NVAR + 2) * total + q];
+          data->sweep->PSIn[q]  = cache[(NVAR + 3) * total + q];
+        }
+      }
+    }
+  }
+}
+#endif
+
+#if !defined(_OPENACC) && !defined(_OPENMP)
+// PSIn is produced only by GLM solvers. Do not read uninitialized storage
+// in EW/CT builds; Bn is needed by both Powell sources and CT's LLF faces.
+#ifdef GLM_MHD
+constexpr int auxiliary_fields=4;
+#else
+constexpr int auxiliary_fields=3;
+#endif
+
+#ifdef STAGGERED_MHD
+// Snapshot the directional outputs of CT_Store_* before FOFC changes them.
+// Restore before applying the current pass's LLF mask. Edge EMFs are rebuilt
+// by CT_ComputeEMF, so caching them would retain the previous pass's mask.
+static void transfer_ct(Data *d,Grid *g,RBox *box,int dir,bool save){
+ static std::vector<double> cache[3];
+#if CT_EMF_AVERAGE == CT_CONTACT
+ static std::vector<signed char> sign[3];
+#endif
+ EMF *emf=d->emf;
+ const int transverse=(dir+1)%3, binormal=(dir+2)%3;
+ Ary3D *fields[]={&emf->e[binormal][dir],&emf->e[transverse][dir],
+#if CT_EMF_AVERAGE == CT_FLUX
+                 &emf->e_dff[binormal][dir],&emf->e_dff[transverse][dir],
+#elif CT_EMF_AVERAGE == UCT_HLL
+                 &emf->aL[dir],&emf->aR[dir],&emf->dL[dir],&emf->dR[dir],
+#endif
+ };
+ constexpr size_t count=sizeof(fields)/sizeof(fields[0]);
+ int ni,nj,ib,ie,jb,je,kb,ke;
+ ARRAY_STRIDES(g,dir,ni,nj);
+ if(dir==IDIR)RBoxPermuteIndices<IDIR>(box,ib,ie,jb,je,kb,ke);
+ else if(dir==JDIR)RBoxPermuteIndices<JDIR>(box,ib,ie,jb,je,kb,ke);
+ else RBoxPermuteIndices<KDIR>(box,ib,ie,jb,je,kb,ke);
+ const size_t faces=(size_t)(ie-ib+2)*(je-jb+1)*(ke-kb+1);
+ cache[dir].resize(count*faces);
+#if CT_EMF_AVERAGE == CT_CONTACT
+ sign[dir].resize(faces);
+#endif
+ size_t face=0;
+ for(int k=kb;k<=ke;++k)for(int j=jb;j<=je;++j)for(int i=ib;i<=ie+1;++i,++face){
+  const int x=dir==IDIR?i:j;
+  const int y=dir==JDIR?i:(dir==IDIR?j:k);
+  const int z=dir==KDIR?i:k;
+  for(size_t n=0;n<count;++n){
+   double &value=(*fields[n])(x,y,z);
+   if(save)cache[dir][n*faces+face]=value;
+   else value=cache[dir][n*faces+face];
+  }
+#if CT_EMF_AVERAGE == CT_CONTACT
+  if(save)sign[dir][face]=emf->sv[dir](x,y,z);
+  else emf->sv[dir](x,y,z)=sign[dir][face];
+#endif
+ }
+}
+#endif
+
+static void transfer_legacy(Data *d,timeStep *dt,Grid *g,RBox *box,int dir,bool save){
+ static std::vector<double> cache[3], center_velocity[3];
+ const size_t total=(size_t)g->ntot[0]*g->ntot[1]*g->ntot[2];
+ const size_t fields=NVAR+auxiliary_fields;
+ if(cache[dir].size()!=total*fields)cache[dir].resize(total*fields);
+ if(center_velocity[dir].size()!=total*3)center_velocity[dir].resize(total*3);
+ int ni,nj,ib,ie,jb,je,kb,ke;
+ ARRAY_STRIDES(g,dir,ni,nj);
+ if(dir==IDIR)RBoxPermuteIndices<IDIR>(box,ib,ie,jb,je,kb,ke);
+ else if(dir==JDIR)RBoxPermuteIndices<JDIR>(box,ib,ie,jb,je,kb,ke);
+ else RBoxPermuteIndices<KDIR>(box,ib,ie,jb,je,kb,ke);
+ // Reconstruction converts vC to four-velocity and back in place. Preserve
+ // its rounded three-velocity as well: FOFC and RHS consume this buffer.
+ for(int k=kb;k<=ke;++k)for(int j=jb;j<=je;++j)for(int i=0;i<ni;++i){
+  size_t q=i+(size_t)ni*(j+(size_t)nj*k);
+  for(int n=0;n<3;++n){
+   double &v=d->sweep->vC[(size_t)NVAR*ni*(j+(size_t)nj*k)+i+(size_t)ni*(VX1+n)];
+   if(save)center_velocity[dir][3*q+n]=v;else v=center_velocity[dir][3*q+n];
+  }
+ }
+ for(int k=kb;k<=ke;++k)for(int j=jb;j<=je;++j)for(int i=ib;i<=ie+1;++i){
+  size_t q=i+(size_t)ni*(j+(size_t)nj*k);
+  double *c=cache[dir].data()+q*fields;
+  for(int n=0;n<NVAR;++n){
+   double &f=d->sweep->flux[(size_t)NVAR*ni*(j+(size_t)nj*k)+i+(size_t)ni*n];
+   if(save)c[n]=f;else f=c[n];
+  }
+  double *values[]={d->sweep->press+q,d->sweep->Bn+q,dt->cmax+q,
+#ifdef GLM_MHD
+                    d->sweep->PSIn+q,
+#endif
+  };
+  for(int n=0;n<auxiliary_fields;++n){if(save)c[NVAR+n]=*values[n];else *values[n]=c[NVAR+n];}
+ }
+}
+
+// Cache matches each sweep's variable-major row layout. Only initialized
+// faces and reconstructed central velocities are saved.
+void transfer(Data *d,timeStep *dt,Grid *g,RBox *box,int dir,bool save){
+#ifdef STAGGERED_MHD
+ transfer_ct(d,g,box,dir,save);
+#endif
+ if(!stream_enabled()){transfer_legacy(d,dt,g,box,dir,save);return;}
+ static std::vector<double> flux[3],aux[3],vel[3];
+ size_t total=(size_t)g->ntot[0]*g->ntot[1]*g->ntot[2];
+ flux[dir].resize(total*NVAR);aux[dir].resize(total*auxiliary_fields);vel[dir].resize(total*3);
+ int ni,nj,ib,ie,jb,je,kb,ke;
+ ARRAY_STRIDES(g,dir,ni,nj);
+ if(dir==IDIR)RBoxPermuteIndices<IDIR>(box,ib,ie,jb,je,kb,ke);
+ else if(dir==JDIR)RBoxPermuteIndices<JDIR>(box,ib,ie,jb,je,kb,ke);
+ else RBoxPermuteIndices<KDIR>(box,ib,ie,jb,je,kb,ke);
+ for(int k=kb;k<=ke;++k)for(int j=jb;j<=je;++j){
+  size_t row=(size_t)ni*(j+(size_t)nj*k);
+  for(int n=0;n<NVAR;++n){
+   if(save){
+    if(n>=VX1 && n<=VX3)
+     std::copy_n(d->sweep->vC+NVAR*row+ni*n,ni,vel[dir].data()+3*row+ni*(n-VX1));
+   }else{
+    for(int i=0;i<ni;++i){
+     int x=dir==IDIR?i:j;
+     int y=dir==JDIR?i:(dir==IDIR?j:k);
+     int z=dir==KDIR?i:k;
+     d->sweep->vC[NVAR*row+ni*n+i]=(n>=VX1 && n<=VX3)
+       ?vel[dir][3*row+ni*(n-VX1)+i]:d->Vc(x,y,z,n);
+    }
+   }
+   double *a=d->sweep->flux+NVAR*row+ni*n+ib;
+   double *b=flux[dir].data()+NVAR*row+ni*n+ib;
+   if(save)std::copy_n(a,ie-ib+2,b);else std::copy_n(b,ie-ib+2,a);
+  }
+  if(!save)for(int i=0;i<ni;++i){
+   int x=dir==IDIR?i:j;
+   int y=dir==JDIR?i:(dir==IDIR?j:k);
+   int z=dir==KDIR?i:k;
+   d->sweep->flag[row+i]=d->flag(x,y,z);
+  }
+  double *a[]={d->sweep->press,d->sweep->Bn,dt->cmax,
+#ifdef GLM_MHD
+               d->sweep->PSIn,
+#endif
+  };
+  for(int n=0;n<auxiliary_fields;++n){
+   double *b=aux[dir].data()+n*total+row+ib;
+   if(save)std::copy_n(a[n]+row+ib,ie-ib+2,b);
+   else std::copy_n(b,ie-ib+2,a[n]+row+ib);
+  }
+ }
+}
+
+#elif defined(_OPENMP)
+void transfer(Data *, timeStep *, Grid *, RBox *, int, bool) {}
+#endif
+} // namespace fofc_cache
+#endif // PCP_FOFC
 
 #pragma acc routine seq
 int RMHD_PCP_Recover(double *u, double *v, RunConfig &run_config, int allow_fix)
@@ -148,10 +421,6 @@ void RMHD_PCP_LimitFaces(Data *data, Grid *grid, RBox *box, int dir)
   }
 }
 
-#if PCP_FOFC == YES
-#include "pcp_flux.inc"
-#endif
-
 #if (PCP_NR == YES || PCP_FOFC == YES || FALLBACK_MODE == FALLBACK_RECOMPUTE || CT_RMHD_CONSISTENT == YES)
 #if PCP_FOFC == YES
 // Device snapshots include the upper face in each component's own direction.
@@ -210,28 +479,114 @@ struct PCPSnapshot {
 };
 #endif
 
-// Check and recover a completed candidate without changing its stage input.
-// PressureFix is enabled only after all local FOFC attempts have failed.
-static int PCPRecoverStage(Data *data, Grid *grid, RBox &box, RunConfig &run_config,
-                           int allow_pressure_fix)
+// Only the CPU backend owns candidate storage. Recovery callers share this
+// interface; device and non-FOFC builds recover directly without a cache.
+namespace candidate_cache {
+#if PCP_FOFC == YES && !defined(_OPENACC) && !defined(_OPENMP)
+static std::vector<double> input, primitive;
+static std::vector<unsigned char> failed, ct_failed;
+
+inline bool enabled()
+{
+  return fofc_cache::active && std::getenv("FOFC_CANDIDATE_DISABLE") == nullptr;
+}
+
+inline void prepare(Grid *grid)
+{
+  const size_t cells = (size_t)grid->ntot[0] * grid->ntot[1] * grid->ntot[2];
+  input.resize(cells * NVAR);
+  primitive.resize(cells * NVAR);
+  failed.resize(cells);
+  ct_failed.resize(cells);
+}
+
+inline int recover(double *u, double *v, RunConfig &config, int allow_fix,
+                   size_t cell, bool ct_failure, bool use_cache)
+{
+  bool same = use_cache && fofc_cache::pass > 0 && ct_failed[cell] == ct_failure;
+  if (same) {
+    for (int n = 0; n < NVAR; ++n) {
+      // Preserve signed zero and every other bit of the orthonormal input.
+      if (std::memcmp(&u[n], &input[cell * NVAR + n], sizeof(double))) {
+        same = false;
+        break;
+      }
+    }
+  }
+  if (same) {
+    if (!failed[cell]) {
+      for (int n = 0; n < NVAR; ++n) v[n] = primitive[cell * NVAR + n];
+    }
+    return failed[cell];
+  }
+  if (use_cache) {
+    for (int n = 0; n < NVAR; ++n) input[cell * NVAR + n] = u[n];
+  }
+  const int err = ct_failure ? 1 : RMHD_PCP_Recover(u, v, config, allow_fix);
+  if (use_cache) {
+    failed[cell] = (err != 0);
+    ct_failed[cell] = ct_failure;
+    if (!err) {
+      for (int n = 0; n < NVAR; ++n) primitive[cell * NVAR + n] = v[n];
+    }
+  }
+  return err;
+}
+#else
+inline bool enabled() { return false; }
+inline void prepare(Grid *) {}
+
+#pragma acc routine seq
+inline int recover(double *u, double *v, RunConfig &config, int allow_fix,
+                   size_t, bool ct_failure, bool)
+{
+  return ct_failure ? 1 : RMHD_PCP_Recover(u, v, config, allow_fix);
+}
+#endif
+} // namespace candidate_cache
+
+// Both entry points use the same metric conversion, recovery and commit path.
+// Only the fused variant constructs U in the loop instead of reading it.
+template<bool fused>
+static int PCPRecoverStageImpl(Data *data, Grid *grid, RBox &box,
+                               RunConfig &run_config, int allow_pressure_fix,
+                               const Ary4D &Ubase, const Ary4D &stage_u,
+                               const Ary4D &rhs, double initial_weight,
+                               double stage_weight)
 {
   int i, j, k;
   int bad = 0;
-#pragma acc parallel loop collapse(3) present(data, grid, run_config, box) reduction(+ : bad)
+  const bool use_candidate = candidate_cache::enabled() && !allow_pressure_fix;
+
+#pragma acc parallel loop collapse(3) present(data, grid, run_config, box, Ubase, stage_u, rhs) reduction(+ : bad)
   BOX_LOOP (box, i, j, k) {
     double u[NVAR], v[NVAR];
     for (int n = 0; n < NVAR; ++n) {
-      u[n] = data->Uc(i, j, k, n);
+      if constexpr (fused) {
+        u[n] = initial_weight * Ubase(i, j, k, n) +
+               stage_weight * (stage_u(i, j, k, n) + rhs(i, j, k, n));
+      } else {
+        u[n] = data->Uc(i, j, k, n);
+      }
     }
 #if GEOMETRY != CARTESIAN
     Metric metric;
     MetricSet(metric, grid->rC[i], grid->sC[j]);
     ConsToOrtho(u, metric);
 #endif
-    int err = (data->flag(i, j, k) & FLAG_PCP_CT_FAIL)
-                  ? 1
-                  : RMHD_PCP_Recover(u, v, run_config, allow_pressure_fix);
+    const size_t cell = i + (size_t)grid->ntot[0] * (j + (size_t)grid->ntot[1] * k);
+    const bool ct_failure = (data->flag(i, j, k) & FLAG_PCP_CT_FAIL) != 0;
+    const int err = candidate_cache::recover(u, v, run_config, allow_pressure_fix,
+                                             cell, ct_failure, use_candidate);
     if (err) {
+      if constexpr (fused) {
+        // Keep the original coordinate representation on failure. Neither a
+        // metric round trip nor a failed recovery may alter the candidate U.
+        for (int n = 0; n < NVAR; ++n) {
+          data->Uc(i, j, k, n) = initial_weight * Ubase(i, j, k, n) +
+              stage_weight * (stage_u(i, j, k, n) + rhs(i, j, k, n));
+        }
+      }
       data->flag(i, j, k) |= FLAG_PCP_FOFC | FLAG_FALLBACK;
       ++bad;
     } else {
@@ -250,6 +605,25 @@ static int PCPRecoverStage(Data *data, Grid *grid, RBox &box, RunConfig &run_con
 #endif
   return bad;
 }
+
+static int PCPRecoverStage(Data *data, Grid *grid, RBox &box,
+                           RunConfig &config, int allow_fix)
+{
+  // The unused inputs disappear from the non-fused template instantiation.
+  return PCPRecoverStageImpl<false>(data, grid, box, config, allow_fix,
+                                    data->Uc, data->Uc, data->Uc, 0.0, 0.0);
+}
+
+#if PCP_FOFC == YES
+static int PCPRecoverStageFused(Data *data, Grid *grid, RBox &box,
+                                RunConfig &config, const Ary4D &Ubase,
+                                const Ary4D &stage_u, const Ary4D &rhs,
+                                double initial_weight, double stage_weight)
+{
+  return PCPRecoverStageImpl<true>(data, grid, box, config, 0, Ubase, stage_u,
+                                   rhs, initial_weight, stage_weight);
+}
+#endif
 
 void RMHD_PCP_SetStageTime(Data *data, timeStep *Dts, int stage_number)
 {
@@ -288,6 +662,8 @@ uint32_t RMHD_PCP_RunStage(Data *data, timeStep *Dts, double dt,
                            Ary4D &rhs, Ary3D (&rs)[6], double initial_weight,
                            double stage_weight, RBox *box, Grid *grid)
 {
+  fofc_cache::Stage cache_stage;
+  if (candidate_cache::enabled()) candidate_cache::prepare(grid);
   static PCPSnapshot stage;
   static bool allocated = false;
   if (!allocated) {
@@ -337,6 +713,7 @@ uint32_t RMHD_PCP_RunStage(Data *data, timeStep *Dts, double dt,
   const int local_passes = PCP_STAGE_LOCAL_PASSES;
   int bad = 0;
   for (int pass = 0; pass < local_passes; ++pass) {
+    fofc_cache::pass = pass;
     if (pass > 0) {
       stage.transfer(data, grid, 0);
     }
@@ -351,12 +728,15 @@ uint32_t RMHD_PCP_RunStage(Data *data, timeStep *Dts, double dt,
 #endif
     const bool pcp_flux_possible = (step_retry > 0 || pass > 0);
     UpdateStage(data, rhs, rs, grid, Dts, box, dt, pcp_flux_possible);
+    const bool fuse_rk = fofc_cache::rk_enabled();
+    if(!fuse_rk){
 #pragma acc parallel loop collapse(3) present(data, rhs, box, Ubase, stage.u)
     BOX_LOOP ((*box), i, j, k) {
       for (int n = 0; n < NVAR; ++n) {
         data->Uc(i, j, k, n) = initial_weight * Ubase(i, j, k, n) +
                                stage_weight * (stage.u(i, j, k, n) + rhs(i, j, k, n));
       }
+    }
     }
 #ifdef STAGGERED_MHD
     for (int n = 0; n < DIMENSIONS; ++n) {
@@ -379,7 +759,12 @@ uint32_t RMHD_PCP_RunStage(Data *data, timeStep *Dts, double dt,
     }
     CT_AverageStaggeredFields(data, 1, box, grid);
 #endif
-    bad = PCPRecoverStage(data, grid, *box, run_config, 0);
+    if (fuse_rk) {
+      bad = PCPRecoverStageFused(data, grid, *box, run_config, Ubase, stage.u, rhs,
+                                 initial_weight, stage_weight);
+    } else {
+      bad = PCPRecoverStage(data, grid, *box, run_config, 0);
+    }
     if (!bad) {
       return 0;
     }

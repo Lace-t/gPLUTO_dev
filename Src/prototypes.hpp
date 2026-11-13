@@ -312,3 +312,5 @@ double* elem4 (double*, int, int, int, int, Grid *);
 
 //void  PowerLawCooling (Ary4D &, double, timeStep &, Grid &);
 
+
+const char *ParamFileLine(const char *);

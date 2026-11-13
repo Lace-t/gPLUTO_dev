@@ -232,6 +232,10 @@ void HLLC_Solver (Data *data, timeStep *Dts, Grid *grid, RBox *box)
       }
       #endif
 
+      // A failed HLLC construction must not reach sqrt or star-state divisions.
+      // Keep the existing HLL output branch (including its pressure convention).
+      double vxs = 0.0;
+      if (!switch_to_hll) {
       double vxl = vl[VXn];
       double vxr = vr[VXn];
 
@@ -266,8 +270,31 @@ void HLLC_Solver (Data *data, timeStep *Dts, Grid *grid, RBox *box)
 
       // 2e3. Solve quadratic, get v*
 
-      scrh = 1.0 + sqrt(1.0 - 4.0*a*c/(b*b));
-      double vxs  = - 2.0*c/(b*scrh);
+      // Preserve the original root on regular interfaces. A negative
+      // discriminant (even a tiny one) safely selects HLL rather than
+      // inventing a real root. Degenerate/nonfinite arithmetic does likewise.
+      const double b2 = b*b;
+      if (!isfinite(a) || !isfinite(b) || !isfinite(c) ||
+          !isfinite(b2) || !(b2 > 0.0)) {
+        switch_to_hll = 1;
+      } else {
+        const double discriminant = 1.0 - 4.0*a*c/b2;
+        if (!isfinite(discriminant) || discriminant < 0.0) {
+          switch_to_hll = 1;
+        } else {
+          scrh = 1.0 + sqrt(discriminant);
+          const double denominator = b*scrh;
+          if (!isfinite(denominator) || denominator == 0.0) {
+            switch_to_hll = 1;
+          } else {
+            vxs = -2.0*c/denominator;
+            if (!isfinite(vxs) || !(fabs(vxs) < 1.0) ||
+                !(Sl < vxs && vxs < Sr)) switch_to_hll = 1;
+          }
+        }
+      }
+
+      if (!switch_to_hll) {
 
       // 2e4. Compute *L and *R states
 
@@ -321,7 +348,9 @@ void HLLC_Solver (Data *data, timeStep *Dts, Grid *grid, RBox *box)
         // Avoid superluminal speed by 
         // switching to HLL solver
 
-        if (gammas_2 <= 0.0) switch_to_hll = 1;
+        if (!isfinite(gammas_2) || gammas_2 <= 0.0) switch_to_hll = 1;
+
+        if (!switch_to_hll) {
 
         // Complete solver
 
@@ -359,11 +388,22 @@ void HLLC_Solver (Data *data, timeStep *Dts, Grid *grid, RBox *box)
         usl[BXn] = usr[BXn] = Bx;
         usl[BXt] = usr[BXt] = Bys;
         usl[BXb] = usr[BXb] = Bzs;
+        } // finite, subluminal star velocity
       }
 
       #ifdef GLM_MHD
       usl[PSI_GLM] = usr[PSI_GLM] = ul[PSI_GLM];
       #endif
+
+      if (!switch_to_hll) {
+        if (!(usl[RHO] > 0.0) || !(usr[RHO] > 0.0)) switch_to_hll = 1;
+        #pragma acc loop seq
+        for (int n = 0; n < NFLX; ++n) {
+          if (!isfinite(usl[n]) || !isfinite(usr[n])) switch_to_hll = 1;
+        }
+      }
+      } // valid contact speed
+      } // HLLC requested
 
       // 2e5. Check consistency condition
 /*
@@ -395,7 +435,14 @@ void HLLC_Solver (Data *data, timeStep *Dts, Grid *grid, RBox *box)
           press(i) = pr;
         }
 
-      }else{                // Use HLL flux 
+        // Finite star states can still overflow when forming the flux.
+        #pragma acc loop seq
+        for (int n = 0; n < NFLX; ++n) {
+          if (!isfinite(flux(i,n))) switch_to_hll = 1;
+        }
+        if (!isfinite(press(i))) switch_to_hll = 1;
+      }
+      if (switch_to_hll) {   // Use HLL flux 
 
         // Note: need to re-calculate F(hll) since the previous 
         // array Fhll[] may have been modified with RMHD_REDUCED_ENERGY 
@@ -438,7 +485,7 @@ void HLLC_Solver (Data *data, timeStep *Dts, Grid *grid, RBox *box)
 
     #pragma acc loop seq
     for (nv = 0; nv < NFLX; nv++){
-      if (isnan(flux(i,nv))) {
+      if (!isfinite(flux(i,nv))) {
         ATOMIC_ERR_UPDATE(err_kernel, ERR_NAN, ERR_QUIT);
         KERNEL_ERR_UPDATE(data->err(ti,tj,tk),  ERR_NAN, ERR_QUIT); 
       }

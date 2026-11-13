@@ -22,8 +22,8 @@
 ////////////////////////////////////////////////////////////////////////
 #include "gpluto.hpp"
 
-template<int dir>
-void LF_Solver (Data *, timeStep *, Grid *, RBox *);
+template<int dir, bool fofc>
+static void LF_SolverImpl(Data *, timeStep *, Grid *, RBox *);
 
 ////////////////////////////////////////////////////////////////////////
 /*!
@@ -31,17 +31,28 @@ void LF_Solver (Data *, timeStep *, Grid *, RBox *);
 ////////////////////////////////////////////////////////////////////////
 void LF_Solver_T (Data *data, timeStep *Dts, Grid *grid, RBox *box, int dir)
 {
-  if      (dir == IDIR) LF_Solver<IDIR>(data, Dts, grid, box);
-  else if (dir == JDIR) LF_Solver<JDIR>(data, Dts, grid, box);
-  else if (dir == KDIR) LF_Solver<KDIR>(data, Dts, grid, box);
+  if      (dir == IDIR) LF_SolverImpl<IDIR, false>(data, Dts, grid, box);
+  else if (dir == JDIR) LF_SolverImpl<JDIR, false>(data, Dts, grid, box);
+  else if (dir == KDIR) LF_SolverImpl<KDIR, false>(data, Dts, grid, box);
 }
+
+#if PCP_FOFC == YES
+// Reuse the ordinary LF kernel with marked faces and cell-centered states.
+// Dissipation and CFL use the same local characteristic-speed bound.
+void PCP_LF_Solver(Data *data, timeStep *Dts, Grid *grid, RBox *box, int dir)
+{
+  if      (dir == IDIR) LF_SolverImpl<IDIR, true>(data, Dts, grid, box);
+  else if (dir == JDIR) LF_SolverImpl<JDIR, true>(data, Dts, grid, box);
+  else if (dir == KDIR) LF_SolverImpl<KDIR, true>(data, Dts, grid, box);
+}
+#endif
 
 ////////////////////////////////////////////////////////////////////////
 /*!
 */
 ////////////////////////////////////////////////////////////////////////
-template<int dir>
-void LF_Solver (Data *data, timeStep *Dts, Grid *grid, RBox *box)
+template<int dir, bool fofc>
+static void LF_SolverImpl(Data *data, timeStep *Dts, Grid *grid, RBox *box)
  {
   int      i, j, k, nv;
   int      ibeg, jbeg, kbeg;
@@ -121,9 +132,22 @@ void LF_Solver (Data *data, timeStep *Dts, Grid *grid, RBox *box)
     if constexpr (dir == JDIR) {ti = j; tj = i; tk = k;}
     if constexpr (dir == KDIR) {ti = j; tj = k; tk = i;}
 
-    for (nv = 0; nv < NVAR; nv++) {
-      vl[nv] = vL(i,nv);
-      vr[nv] = vR(i,nv);
+    if constexpr (fofc) {
+      Ary1Duint32_t mask(&data->sweep->flag[offset],ni);
+      if (!((mask(i-1) | mask(i)) & FLAG_PCP_FOFC)) continue;
+      Ary2D vc(&data->sweep->vC[offset1],ni,NVAR);
+      for (nv = 0; nv < NVAR; nv++) {
+        vl[nv] = vc(i-1,nv);
+        vr[nv] = vc(i,nv);
+      }
+#ifdef STAGGERED_MHD
+      vl[BXn] = vr[BXn] = Bn(i);
+#endif
+    } else {
+      for (nv = 0; nv < NVAR; nv++) {
+        vl[nv] = vL(i,nv);
+        vr[nv] = vR(i,nv);
+      }
     }
 
     data->err(ti,tj,tk) = 0;   // reset error 
@@ -160,6 +184,8 @@ void LF_Solver (Data *data, timeStep *Dts, Grid *grid, RBox *box)
     SoundSpeed2 (stateR, run_config);
     a2L = stateL.a2;
     a2R = stateR.a2;
+    // Use the same local characteristic bound for LLF dissipation and CFL.
+    // FOFC uses cell-centered states; the ordinary solver uses face states.
     double sl_min, sl_max, sr_min, sr_max;
 
     #if PHYSICS != GRMHD

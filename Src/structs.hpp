@@ -1,3 +1,4 @@
+#include "grid_spec.hpp"
 ////////////////////////////////////////////////////////////////////////
 /*!
   \file
@@ -452,6 +453,7 @@ typedef struct RunConfig_{
 ////////////////////////////////////////////////////////////////////////
 #pragma omp declare target
 typedef struct Runtime_{
+  GridSpec grid_spec[3];    /**< Optional PLUTO-style grid patches. */
   int    npoint[3];           /**< Global number of zones in the interior domain */
   int    left_bound[3];       /**< Array of left boundary types */
   int    right_bound[3];      /**< Array of right boundary types */
@@ -615,6 +617,7 @@ typedef struct timeStep_{
 
   double time;        /**< simulation time */
   double dt;          /**< simulation time increment */
+  double dt_physics = 0.0; /**< Latest NextTimeStep bound before growth/event limits; 0 until computed. */
   int    stepNumber;  /**< simulation time step */
   int    intStage;    /**< simulation integration stage */
   int    Nsub_particles; /**< Number of sub-cycles in particles */

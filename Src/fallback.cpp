@@ -180,6 +180,8 @@ void Fallback(Data *data, Grid *grid, timeStep *Dts)
   static Ary3D Vs0[6];
   RBox box, box_tot;
 
+  int rank=0;
+
   // ------------------------------------------------------
   // 0. Define boxes and allocate memory, reset flag arrays 
   // ------------------------------------------------------
@@ -455,7 +457,11 @@ void Fallback(Data *data, Grid *grid, timeStep *Dts)
   Dts->time = t0;
   Dts->dt = accepted_dt;
 
-  if (retry > 0 || local_pass > 0) {
+#ifdef PARALLEL
+  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+#endif
+
+  if (rank == 0 &&  (retry > 0 || local_pass > 0)) {
     printLog("> Fallback success: t=%.4e dt=%.4e halvings=%d local_pass=%d\n",
              t0, accepted_dt, retry, local_pass);
   }

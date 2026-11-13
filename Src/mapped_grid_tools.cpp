@@ -358,3 +358,11 @@ double StretchRatioFunc (double r)
 
 
 #endif // MAPPED_GRID == YES
+
+#if MAPPED_GRID == YES
+// Optional legacy override: explicit ini patches do not need user C++ code.
+// GCC, Clang and NVHPC support weak host symbols.
+__attribute__((weak)) double MappedGrid(Grid *grid,int dir,double xi) {
+  return MappedGrid_Uniform(grid,dir,xi);
+}
+#endif

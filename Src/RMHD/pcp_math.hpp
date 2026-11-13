@@ -2,7 +2,10 @@
 #define GPLUTO_PCP_MATH_HPP
 
 #include <cmath>
-#if defined(__NVCOMPILER) && defined(_OPENACC)
+// The device-intrinsic workaround is needed from NVHPC 26.3 onward.
+// Older SDKs use std::fma and avoid cudadevice.h conflicts with CUDA half types.
+#if defined(__NVCOMPILER) && defined(_OPENACC) && \
+    (__NVCOMPILER_MAJOR__ * 100 + __NVCOMPILER_MINOR__ >= 2603)
 #if __has_include(<cudadevice.h>) && __has_include(<nv/target>)
 #define GPLUTO_PCP_NV_FMA 1
 #include <cudadevice.h>
