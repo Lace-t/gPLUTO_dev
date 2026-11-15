@@ -14,3 +14,6 @@ OBJ          += pcp_nr.o pcp_stage.o rmhd_consistency.o mappers.o set_solver.o h
 HEADERS      += rmhd.hpp vel_limiter.hpp
 
 pcp_nr.o: $(SRC)/RMHD/pcp_math.hpp
+
+# Header-only local entropy guard; rebuild when its numerical rule changes.
+hllc.o hlld.o: $(SRC)/RMHD/entropy_guard.hpp

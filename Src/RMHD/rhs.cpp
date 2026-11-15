@@ -568,7 +568,7 @@ static void RightHandSideImpl(Data *data, timeStep *Dts, const Grid *const grid,
         PowellSourceTerm(dt*divB, v, src);
         #elif (DIVB_CONTROL == DIV_CLEANING) && (GLM_EXTENDED == YES)
         gradPSI = (PSIn(j+1) - PSIn(j))/dl;
-        GLM_ExtendedSource (dt*divB, dt*gradPSI, v, src);
+        GLM_ExtendedSource (dt*divB, dt*gradPSI, v, src, dir);
         #endif
         #if GEOMETRY != CARTESIAN
         OrthoToCons(src, metric);
@@ -746,7 +746,7 @@ static void RightHandSideImpl(Data *data, timeStep *Dts, const Grid *const grid,
         PowellSourceTerm(dt*divB, v, src);
         #elif (DIVB_CONTROL == DIV_CLEANING) && (GLM_EXTENDED == YES)
         gradPSI = (PSIn(k+1) - PSIn(k))/dl;
-        GLM_ExtendedSource (dt*divB, dt*gradPSI, v, src);
+        GLM_ExtendedSource (dt*divB, dt*gradPSI, v, src, dir);
         #endif
         #if GEOMETRY != CARTESIAN
         OrthoToCons(src, metric);

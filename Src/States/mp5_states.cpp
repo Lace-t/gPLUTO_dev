@@ -33,6 +33,7 @@
 */
 ////////////////////////////////////////////////////////////////////////
 #include "gpluto.hpp"
+#include "reconstruction_geometry.hpp"
 #include "States/states.hpp"
 
 // Explicit template instantiations
@@ -137,15 +138,16 @@ void Reconstruct (Data *data, Grid *grid, RBox *box)
     w[1] = v(i-1,nv);
     #endif
 
-    cp = cm = 2.0;
+    const LinearGeometry geometry(grid,dir,i);
+    cp = geometry.cp; cm = geometry.cm;
 
     // 2b. Reduce order in flagged zones
 
     if (flag(i) & FLAG_FLAT) {
       vL(i+1,nv) = vR(i,nv) = v(i,nv);
     } else if (flag(i) & FLAG_MINMOD){
-      dvp = v(i+1,nv) - v(i,nv);
-      dvm = v(i,nv)   - v(i-1,nv);
+      dvp = (v(i+1,nv) - v(i,nv))*geometry.wp;
+      dvm = (v(i,nv)   - v(i-1,nv))*geometry.wm;
       dv_lim    = MINMOD_LIMITER (dvp, dvm);
       vL(i+1,nv) = v(i,nv) + 0.5*dv_lim;
       vR(i,nv)   = v(i,nv) - 0.5*dv_lim;
@@ -207,20 +209,21 @@ void Reconstruct (Data *data, Grid *grid, RBox *box)
     Ary1Duint32_t flag(&data->sweep->flag[offset],ni);
 
     double dvp, dvm, dv_lim;
+    const LinearGeometry geometry(grid,dir,i);
 
     // 3a. Correct for negative press. or dens.
 
     if (vL(i+1,RHO) < 0.0 || vR(i,RHO) < 0.0){
-      dvp = v(i+1,RHO) - v(i,RHO);
-      dvm = v(i,RHO)   - v(i-1,RHO);
+      dvp = (v(i+1,RHO) - v(i,RHO))*geometry.wp;
+      dvm = (v(i,RHO)   - v(i-1,RHO))*geometry.wm;
       dv_lim      = MINMOD_LIMITER (dvp, dvm);
       vL(i+1,RHO) = v(i,RHO) + 0.5*dv_lim;
       vR(i,RHO)   = v(i,RHO) - 0.5*dv_lim;
     }
     #if HAVE_ENERGY
     if (vL(i+1,PRS) < 0.0 || vR(i,PRS) < 0.0){
-      dvp = v(i+1,PRS) - v(i,PRS);
-      dvm = v(i,PRS)   - v(i-1,PRS);
+      dvp = (v(i+1,PRS) - v(i,PRS))*geometry.wp;
+      dvm = (v(i,PRS)   - v(i-1,PRS))*geometry.wm;
       dv_lim    = MINMOD_LIMITER (dvp, dvm);
       vL(i+1,PRS) = v(i,PRS) + 0.5*dv_lim;
       vR(i,PRS)   = v(i,PRS) - 0.5*dv_lim;
@@ -228,8 +231,8 @@ void Reconstruct (Data *data, Grid *grid, RBox *box)
     #endif
     #if RADIATION
     if (vL(i+1,ENR) < 0.0 || vR(i,ENR) < 0.0){
-      dvp = v(i+1,ENR) - v(i,ENR);
-      dvm = v(i,ENR)   - v(i-1,ENR);
+      dvp = (v(i+1,ENR) - v(i,ENR))*geometry.wp;
+      dvm = (v(i,ENR)   - v(i-1,ENR))*geometry.wm;
       dv_lim    = MINMOD_LIMITER (dvp, dvm);
       vL(i+1,ENR) = v(i,ENR) + 0.5*dv_lim;
       vR(i,ENR)   = v(i,ENR) - 0.5*dv_lim;
@@ -363,7 +366,8 @@ void Reconstruct (Data *data, Grid *grid, RBox *box)
 
     State state;
 
-    cp = cm = 2.0;
+    const LinearGeometry geometry(grid,dir,i);
+    cp = geometry.cp; cm = geometry.cm;
 
     if (dir == IDIR)  {ti = i; tj = j; tk = k;}
     if (dir == JDIR)  {ti = j; tj = i; tk = k;}
@@ -377,8 +381,8 @@ void Reconstruct (Data *data, Grid *grid, RBox *box)
     }else if (flag(i) & FLAG_MINMOD) {
       #pragma acc loop
       NVAR_LOOP(nv){
-        dvp = v(i,nv)   - v(i-1,nv);
-        dvm = v(i+1,nv) - v(i,nv);
+        dvp = (v(i,nv)   - v(i-1,nv))*geometry.wm;
+        dvm = (v(i+1,nv) - v(i,nv))*geometry.wp;
         dv  = MINMOD_LIMITER(dvp, dvm);
         vL(i+1,nv) = v(i,nv) + 0.5*dv;
         vR(i,nv)   = v(i,nv) - 0.5*dv;
@@ -521,16 +525,16 @@ void Reconstruct (Data *data, Grid *grid, RBox *box)
     // 2e. Correct for negative pressures or densities
     
     if (vL(i+1,RHO) < 0.0 || vR(i,RHO) < 0.0){
-      dvp = v(i+1,RHO) - v(i,RHO);
-      dvm = v(i,RHO)   - v(i-1,RHO);
+      dvp = (v(i+1,RHO) - v(i,RHO))*geometry.wp;
+      dvm = (v(i,RHO)   - v(i-1,RHO))*geometry.wm;
       dv_lim      = MINMOD_LIMITER (dvp, dvm);
       vL(i+1,RHO) = v(i,RHO) + 0.5*dv_lim;
       vR(i,RHO)   = v(i,RHO) - 0.5*dv_lim;
     }
     #ifdef ENG
     if (vL(i+1,PRS) < 0.0 || vR(i,PRS) < 0.0){
-      dvp = v(i+1,PRS) - v(i,PRS);
-      dvm = v(i,PRS)   - v(i-1,PRS);
+      dvp = (v(i+1,PRS) - v(i,PRS))*geometry.wp;
+      dvm = (v(i,PRS)   - v(i-1,PRS))*geometry.wm;
       dv_lim    = MINMOD_LIMITER (dvp, dvm);
       vL(i+1,PRS) = v(i,PRS) + 0.5*dv_lim;
       vR(i,PRS)   = v(i,PRS) - 0.5*dv_lim;
@@ -538,8 +542,8 @@ void Reconstruct (Data *data, Grid *grid, RBox *box)
     #endif
     #if RADIATION
     if (vL(i+1,ENR) < 0.0 || vR(i,ENR) < 0.0){
-      dvp = v(i+1,ENR) - v(i,ENR);
-      dvm = v(i,ENR)   - v(i-1,ENR);
+      dvp = (v(i+1,ENR) - v(i,ENR))*geometry.wp;
+      dvm = (v(i,ENR)   - v(i-1,ENR))*geometry.wm;
       dv_lim    = MINMOD_LIMITER (dvp, dvm);
       vL(i+1,ENR) = v(i,ENR) + 0.5*dv_lim;
       vR(i,ENR)   = v(i,ENR) - 0.5*dv_lim;

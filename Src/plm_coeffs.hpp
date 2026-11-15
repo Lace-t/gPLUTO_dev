@@ -82,7 +82,7 @@
   // Limiters on uniform Cartesian grid
   // -------------------------------------------------------------
 
-#if UNIFORM_CARTESIAN_GRID == YES
+#if UNIFORM_CARTESIAN_GRID == YES && MAPPED_GRID == NO
 
 /*! OSPRE limiter (uniform Cart. grid) */
  #define SET_OS_LIMITER(dv, dvp, dvm, cp, cm)\

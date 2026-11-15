@@ -33,6 +33,7 @@
 */
 ////////////////////////////////////////////////////////////////////////
 #include "gpluto.hpp"
+#include "reconstruction_geometry.hpp"
 
 // Explicit template instantiations
 template void Reconstruct<IDIR> (Data *, Grid *, RBox *);
@@ -112,12 +113,13 @@ void Reconstruct (Data *data, Grid *grid, RBox *box)
     #pragma acc loop vector
     for (i = ibeg; i <= iend; i++){
       double dvp, dvm, dv;
-      double cp = 2.0, cm = 2.0;
+      const LinearGeometry geometry(grid,dir,i);
+      double cp = geometry.cp, cm = geometry.cm;
 
       // 2a. Compute forward (dvp) and backward (dvm) differences
 
-      dvp = v(i+1,nv) - v(i,nv);
-      dvm = v(i,nv)   - v(i-1,nv);
+      dvp = (v(i+1,nv) - v(i,nv))*geometry.wp;
+      dvm = (v(i,nv)   - v(i-1,nv))*geometry.wm;
 
       // 2b. Apply limiter / reduce order if needed
 
@@ -131,6 +133,7 @@ void Reconstruct (Data *data, Grid *grid, RBox *box)
 
       // 2c. Construct left and right states
 
+      dv = geometry.bound(dv,dvp,dvm);
       vL(i+1,nv) = v(i,nv) + 0.5*dv;
       vR(i,nv)   = v(i,nv) - 0.5*dv;
 
@@ -292,8 +295,9 @@ void Reconstruct (Data *data, Grid *grid, RBox *box)
       //     undivided differences of prim. variables 
       //     along characteristics, dw(k) = L(k).dv
 
-      cp = cm = 2.0;
-      dp = dm = 0.5;
+      const LinearGeometry geometry(grid,dir,i);
+      cp = geometry.cp; cm = geometry.cm;
+      dp = geometry.dp; dm = geometry.dm;
 
       #pragma acc loop seq
       NVAR_LOOP(nv) vc[nv]  = v(i,nv);
@@ -303,8 +307,8 @@ void Reconstruct (Data *data, Grid *grid, RBox *box)
 
       #pragma acc loop seq
       NVAR_LOOP(nv) {
-        dvp[nv] = v(i+1,nv) - v(i,nv);
-        dvm[nv] = v(i,nv)   - v(i-1,nv);
+        dvp[nv] = (v(i+1,nv) - v(i,nv))*geometry.wp;
+        dvm[nv] = (v(i,nv)   - v(i-1,nv))*geometry.wm;
       }
 
       PrimToChar<dir> (L, dvm, dwm);
@@ -357,14 +361,24 @@ void Reconstruct (Data *data, Grid *grid, RBox *box)
       #if NSCL > 0
       #pragma acc loop seq
       NSCL_LOOP(nv){
-        SET_LIMITER(dv_lim[nv], dvp[nv], dvm[nv], cp, cm);
+        if (flag(i) & FLAG_FLAT) dv_lim[nv] = 0.0;
+        else if (flag(i) & FLAG_MINMOD) {
+          SET_MM_LIMITER(dv_lim[nv], dvp[nv], dvm[nv], cp, cm);
+        } else {
+          SET_LIMITER(dv_lim[nv], dvp[nv], dvm[nv], cp, cm);
+        }
       }
       #endif
 
       #if RADIATION
       #pragma acc loop seq
       NRAD_LOOP(nv){
-        SET_LIMITER(dv_lim[nv], dvp[nv], dvm[nv], cp, cm);
+        if (flag(i) & FLAG_FLAT) dv_lim[nv] = 0.0;
+        else if (flag(i) & FLAG_MINMOD) {
+          SET_MM_LIMITER(dv_lim[nv], dvp[nv], dvm[nv], cp, cm);
+        } else {
+          SET_LIMITER(dv_lim[nv], dvp[nv], dvm[nv], cp, cm);
+        }
       }
       #endif
 
@@ -372,6 +386,7 @@ void Reconstruct (Data *data, Grid *grid, RBox *box)
 
       #pragma acc loop seq
       NVAR_LOOP(nv){
+        dv_lim[nv] = geometry.bound(dv_lim[nv],dvp[nv],dvm[nv]);
         vL(i+1,nv) = v(i,nv) + dv_lim[nv]*dp;
         vR(i,nv)   = v(i,nv) - dv_lim[nv]*dm;
       }

@@ -539,6 +539,12 @@ void Startup (Data *data, Grid *grid)
     #endif
 
     NVAR_LOOP(nv) vc[nv] = data->Vc(i,j,k,nv);
+    #if PHYSICS == RMHD && ENTROPY_SWITCH
+    // Init/InitDomain supply thermodynamics, not necessarily entropy. Seed
+    // both representations before the first entropy-selected RK recovery.
+    vc[ENTR] = Entropy(vc, run_config);
+    data->Vc(i,j,k,ENTR) = vc[ENTR];
+    #endif
     #if PHYSICS != GRMHD
     PrimToCons(vc, up, run_config);
     #if GEOMETRY != CARTESIAN

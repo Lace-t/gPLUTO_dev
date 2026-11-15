@@ -138,6 +138,26 @@ enum KWAVES {
                                       //    minus the mass density contribution. */
 #endif
 
+// One policy for the HLLC and HLLD fluid Riemann solvers. Work in the
+// local orthonormal frame, before RHS metric/area transformations.
+#ifndef RMHD_ENTROPY_FIX
+  #if PHYSICS == RMHD && EOS == IDEAL && RMHD_REDUCED_ENERGY == YES && \
+      (GEOMETRY == CARTESIAN || GEOMETRY == CYLINDRICAL || GEOMETRY == SPHERICAL) && \
+      ((DIVB_CONTROL == EIGHT_WAVES && EIGHT_WAVES_REDUCED == NO) || \
+       DIVB_CONTROL == DIV_CLEANING || DIVB_CONTROL == CONSTRAINED_TRANSPORT)
+    #define RMHD_ENTROPY_FIX YES
+  #else
+    #define RMHD_ENTROPY_FIX NO
+  #endif
+#endif
+#if RMHD_ENTROPY_FIX == YES && \
+    (PHYSICS != RMHD || EOS != IDEAL || RMHD_REDUCED_ENERGY != YES || \
+     (GEOMETRY != CARTESIAN && GEOMETRY != CYLINDRICAL && GEOMETRY != SPHERICAL) || \
+     (DIVB_CONTROL != EIGHT_WAVES && DIVB_CONTROL != DIV_CLEANING && DIVB_CONTROL != CONSTRAINED_TRANSPORT) || \
+     (DIVB_CONTROL == EIGHT_WAVES && EIGHT_WAVES_REDUCED != NO))
+  #error "RMHD_ENTROPY_FIX requires ideal reduced-energy RMHD with full Powell EW, DC or CT"
+#endif
+
 // NR enables primitive recovery and the interface limiter; FOFC is optional.
 // NR and FOFC both require stage admission; criterion has no separate switch.
 #ifndef PCP_NR
@@ -176,8 +196,8 @@ enum KWAVES {
 #if PCP_STAGE_LOCAL_PASSES < 1
 #error "PCP retry limits must be nonnegative (local passes positive)"
 #endif
-#if (PCP_NR == YES) && ((EOS != IDEAL) || ENTROPY_SWITCH || RADIATION)
-#error "PCP_NR requires ideal EOS without entropy switch or radiation"
+#if (PCP_NR == YES) && ((EOS != IDEAL) || RADIATION)
+#error "PCP_NR requires ideal EOS without radiation"
 #endif
 #if (PCP_NR == YES || PCP_FOFC == YES || FALLBACK_MODE == FALLBACK_RECOMPUTE || CT_RMHD_CONSISTENT == YES)
 
@@ -206,11 +226,11 @@ int RMHD_PCP_Check(const double *);
 #pragma acc routine seq
 int RMHD_PCP_Limit(const double *, double *);
 #pragma acc routine seq
-int RMHD_PCP_NR(const double *, double *, RunConfig &);
+int RMHD_PCP_NR(double *, double *, RunConfig &);
 #pragma acc routine seq
 void RMHD_PCP_SetFallback(const double *, double *, RunConfig &);
 #pragma acc routine seq
-int RMHD_PCP_Recover(double *, double *, RunConfig &, int);
+int RMHD_PCP_Recover(double *, double *, RunConfig &, int, uint32_t = 0);
 #pragma acc routine seq
 int CT_RMHD_CorrectCell(double *, double *, const double *, RunConfig &);
 #pragma omp end declare target
@@ -263,6 +283,13 @@ void Source (Data *, Grid *, double);
 #elif DIVB_CONTROL == CONSTRAINED_TRANSPORT
  #include "MHD/CT/ct.hpp"
  #include "MHD/CT/ct_store.hpp"
+#endif
+
+// These are the CT EMF paths actually populated by both RMHD solvers.
+#if RMHD_ENTROPY_FIX == YES && DIVB_CONTROL == CONSTRAINED_TRANSPORT
+#if CT_EMF_AVERAGE != ARITHMETIC && CT_EMF_AVERAGE != CT_CONTACT && CT_EMF_AVERAGE != CT_FLUX && CT_EMF_AVERAGE != UCT_HLL
+#error "RMHD_ENTROPY_FIX supports arithmetic/contact/flux/UCT_HLL CT EMFs"
+#endif
 #endif
 
 #include "eos.hpp"

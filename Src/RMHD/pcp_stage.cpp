@@ -274,7 +274,8 @@ void transfer(Data *, timeStep *, Grid *, RBox *, int, bool) {}
 #endif // PCP_FOFC
 
 #pragma acc routine seq
-int RMHD_PCP_Recover(double *u, double *v, RunConfig &run_config, int allow_fix)
+int RMHD_PCP_Recover(double *u, double *v, RunConfig &run_config, int allow_fix,
+                     uint32_t flags)
 {
   double work[NVAR], primitive[NVAR];
   for (int n = 0; n < NVAR; ++n) {
@@ -289,7 +290,16 @@ int RMHD_PCP_Recover(double *u, double *v, RunConfig &run_config, int allow_fix)
   primitive[BX2] = work[BX2];
   primitive[BX3] = work[BX3];
 
-  int admissible = RMHD_PCP_Check(work);
+  // Entropy recovery replaces energy, so test its resulting state rather
+  // than rejecting it using the energy that this branch is meant to replace.
+  bool entropy_solve = false;
+#if ENTROPY_SWITCH
+  entropy_solve = (flags & FLAG_ENTROPY) != 0;
+  if (entropy_solve && (!(work[RHO] > 0.0) || !(work[ENTR] > 0.0))) {
+    return 1;
+  }
+#endif
+  int admissible = entropy_solve ? 1 : RMHD_PCP_Check(work);
   uint32_t err = 0;
   if (!admissible) {
     if (!allow_fix || work[RHO] <= 0.0) {
@@ -302,18 +312,24 @@ int RMHD_PCP_Recover(double *u, double *v, RunConfig &run_config, int allow_fix)
   } else {
     State state;
     STATE_SET(state, primitive, work, NULL, 0.0, 0.0, 0.0);
-    uint32_t flag = 0;
-    state.flag = &flag;
+    state.flag = &flags;
     if (allow_fix) {
       err = ConsToPrim(state, run_config);
     } else {
       // FOFC and limiter trials must not commit a pressure-floor repair.
-      err = RMHD_EnergySolve(work, primitive, run_config);
-#if PCP_NR == YES
-      if (err && !RMHD_PCP_NR(work, primitive, run_config)) {
-        err = 0;
-      }
+#if ENTROPY_SWITCH
+      if (entropy_solve) {
+        err = RMHD_EntropySolve(work, primitive, run_config);
+      } else
 #endif
+      {
+        err = RMHD_EnergySolve(work, primitive, run_config);
+#if PCP_NR == YES
+        if (err && !RMHD_PCP_NR(work, primitive, run_config)) {
+          err = 0;
+        }
+#endif
+      }
       if (err) {
         return 1;
       }
@@ -323,15 +339,21 @@ int RMHD_PCP_Recover(double *u, double *v, RunConfig &run_config, int allow_fix)
     return 1;
   }
   if (!allow_fix) {
-    // The strict path cannot alter U: identical input retains its admission.
-    // Reuse the entrance criterion instead of evaluating it a second time.
+    // Energy recovery may synchronize entropy; entropy recovery may replace
+    // energy. All other conservative components must remain unchanged.
     for (int n = 0; n < NVAR; ++n) {
+#if ENTROPY_SWITCH
+      if (n == ENTR || (entropy_solve && n == ENG)) continue;
+#endif
       if (work[n] != u[n]) {
         return 1;
       }
     }
+    if (entropy_solve && !RMHD_PCP_Check(work)) {
+      return 1;
+    }
   } else if (!RMHD_PCP_Check(work)) {
-    // PressureFix can change energy, so repaired states need a fresh check.
+    // PressureFix or entropy recovery can change energy: check the result.
     return 1;
   }
 #if NSCL > 0
@@ -479,10 +501,11 @@ struct PCPSnapshot {
 };
 #endif
 
+// Entropy recovery changes U as well as V: bypass this V-only cache.
 // Only the CPU backend owns candidate storage. Recovery callers share this
 // interface; device and non-FOFC builds recover directly without a cache.
 namespace candidate_cache {
-#if PCP_FOFC == YES && !defined(_OPENACC) && !defined(_OPENMP)
+#if PCP_FOFC == YES && !defined(_OPENACC) && !defined(_OPENMP) && !ENTROPY_SWITCH
 static std::vector<double> input, primitive;
 static std::vector<unsigned char> failed, ct_failed;
 
@@ -501,7 +524,7 @@ inline void prepare(Grid *grid)
 }
 
 inline int recover(double *u, double *v, RunConfig &config, int allow_fix,
-                   size_t cell, bool ct_failure, bool use_cache)
+                   size_t cell, bool ct_failure, bool use_cache, uint32_t flags)
 {
   bool same = use_cache && fofc_cache::pass > 0 && ct_failed[cell] == ct_failure;
   if (same) {
@@ -522,7 +545,7 @@ inline int recover(double *u, double *v, RunConfig &config, int allow_fix,
   if (use_cache) {
     for (int n = 0; n < NVAR; ++n) input[cell * NVAR + n] = u[n];
   }
-  const int err = ct_failure ? 1 : RMHD_PCP_Recover(u, v, config, allow_fix);
+  const int err = ct_failure ? 1 : RMHD_PCP_Recover(u, v, config, allow_fix, flags);
   if (use_cache) {
     failed[cell] = (err != 0);
     ct_failed[cell] = ct_failure;
@@ -538,9 +561,9 @@ inline void prepare(Grid *) {}
 
 #pragma acc routine seq
 inline int recover(double *u, double *v, RunConfig &config, int allow_fix,
-                   size_t, bool ct_failure, bool)
+                   size_t, bool ct_failure, bool, uint32_t flags)
 {
-  return ct_failure ? 1 : RMHD_PCP_Recover(u, v, config, allow_fix);
+  return ct_failure ? 1 : RMHD_PCP_Recover(u, v, config, allow_fix, flags);
 }
 #endif
 } // namespace candidate_cache
@@ -577,7 +600,7 @@ static int PCPRecoverStageImpl(Data *data, Grid *grid, RBox &box,
     const size_t cell = i + (size_t)grid->ntot[0] * (j + (size_t)grid->ntot[1] * k);
     const bool ct_failure = (data->flag(i, j, k) & FLAG_PCP_CT_FAIL) != 0;
     const int err = candidate_cache::recover(u, v, run_config, allow_pressure_fix,
-                                             cell, ct_failure, use_candidate);
+                                             cell, ct_failure, use_candidate, data->flag(i, j, k));
     if (err) {
       if constexpr (fused) {
         // Keep the original coordinate representation on failure. Neither a

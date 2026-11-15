@@ -18,6 +18,6 @@ DEFAULT_OBJ = \
   vector_curl.o userdef_output.o
 
 DEFAULT_HEADERS = grid_spec.hpp grid_input.hpp Array.hpp definitions.hpp eos.hpp gpluto.hpp \
-                  macros.hpp metric.hpp plm_coeffs.hpp prototypes.hpp \
+                  macros.hpp metric.hpp plm_coeffs.hpp reconstruction_geometry.hpp prototypes.hpp \
                   states.hpp structs.hpp
 

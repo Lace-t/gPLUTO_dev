@@ -25,6 +25,9 @@
 */
 ////////////////////////////////////////////////////////////////////////
 #include "gpluto.hpp"
+#if RMHD_ENTROPY_FIX == YES
+#include "entropy_guard.hpp"
+#endif
 
 #define BX_MIN  1.e-6
 
@@ -467,6 +470,27 @@ void HLLC_Solver (Data *data, timeStep *Dts, Grid *grid, RBox *box)
     #elif DIVB_CONTROL == DIV_CLEANING
     Bn(i)   = flux(i,PSI_GLM)/ch2;
     PSIn(i) = flux(i,BXn);
+    #endif
+
+    // Protect the local fluid entropy inequality (Powell EW or GLM-split DC). Bn and
+    // the HLLC core are retained; pressure and tracers follow the chosen flux.
+    #if RMHD_ENTROPY_FIX == YES
+    double candidate[NVAR];
+    #pragma acc loop seq
+    for (int n = 0; n < NFLX; ++n) candidate[n] = flux(i,n);
+    #if DIVB_CONTROL == CONSTRAINED_TRANSPORT
+    // Bn(i) is not a Powell/GLM output in CT. Use the common staggered field.
+    const double entropy_bn = vl[BXn];
+    #else
+    const double entropy_bn = Bn(i);
+    #endif
+    const auto entropy_result = EntropyGuard::apply(
+        vl, vr, ul, ur, fl, fr, Sl, Sr, entropy_bn, candidate, dir, run_config);
+    if (entropy_result.status == 1) {
+      #pragma acc loop seq
+      for (int n = 0; n < NFLX; ++n) flux(i,n) = candidate[n];
+      press(i) = (bR*pl - bL*pr)/(bR - bL);
+    }
     #endif
 
     // 2g. Compute tracer fluxes

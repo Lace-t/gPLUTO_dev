@@ -401,7 +401,7 @@ static double PCPCubicRoot(double E, double D, double B2, double tau)
 
 /* Cai et al. one-dimensional PCP Newton recovery for an ideal EOS. */
 #pragma acc routine seq
-int RMHD_PCP_NR(const double *u, double *v, RunConfig &run_config)
+int RMHD_PCP_NR(double *u, double *v, RunConfig &run_config)
 {
 #if EOS != IDEAL
   (void)u;
@@ -577,6 +577,16 @@ int RMHD_PCP_NR(const double *u, double *v, RunConfig &run_config)
       return 1;
     }
   }
+#endif
+#if ENTROPY_SWITCH
+  // Like EnergySolve, successful energy recovery synchronizes conserved
+  // entropy. Core conservative variables remain unchanged; commit only after
+  // all recovery checks, so a failed NR leaves U untouched.
+  const double entr = v[PRS] * lor_check / pow(v[RHO], run_config.gamma - 1.0);
+  if (!PCPFinite(entr) || !(entr > 0.0)) {
+    return 1;
+  }
+  u[ENTR] = entr;
 #endif
   return 0;
 #endif

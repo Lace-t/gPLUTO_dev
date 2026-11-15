@@ -16,6 +16,7 @@
 */
 ////////////////////////////////////////////////////////////////////////
 #include "gpluto.hpp"
+#include "States/reconstruction_geometry.hpp"
 #include "States/states.hpp"
 
 // Explicit template instantiations
@@ -177,6 +178,7 @@ void ArrayReconstruct (const Data *data, const Ary3D &Q, int flag_dir,
       Ary1D q(&data->sweep->vC[offset],ni);
       Ary1D qL(&data->sweep->vL[offset],ni);
       Ary1D qR(&data->sweep->vR[offset],ni);
+      const LinearGeometry geometry(grid,dir,i);
           
       #if SHOCK_FLATTENING == MULTID
       if (flag(i) & FLAG_FLAT) {
@@ -185,16 +187,18 @@ void ArrayReconstruct (const Data *data, const Ary3D &Q, int flag_dir,
       }
       #endif
 
-      dqp = q(i+1) - q(i);
-      dqm = q(i)   - q(i-1);
+      dqp = (q(i+1) - q(i))*geometry.wp;
+      dqm = (q(i)   - q(i-1))*geometry.wm;
 
       if      (rec == FLAT_LIM)    dq = 0.0;
-      else if (rec == MINMOD_LIM)  dq = MINMOD_LIMITER(dqp, dqm);
-      else if (rec == VANLEER_LIM) dq = VANLEER_LIMITER(dqp, dqm);
-      else if (rec == MC_LIM)      dq = MC_LIMITER(dqp, dqm);
+      else if (rec == MINMOD_LIM || (flag(i) & FLAG_MINMOD))
+                                  dq = MINMOD_LIMITER(dqp, dqm);
+      else if (rec == VANLEER_LIM) { SET_VL_LIMITER(dq,dqp,dqm,geometry.cp,geometry.cm); }
+      else if (rec == MC_LIM)      { SET_MC_LIMITER(dq,dqp,dqm,geometry.cp,geometry.cm); }
       else{
-        SET_LIMITER (dq, dqp, dqm, 2.0, 2.0);
+        SET_LIMITER (dq, dqp, dqm, geometry.cp, geometry.cm);
       }
+      dq = geometry.bound(dq,dqp,dqm);
       qL(i+1) = q(i) + 0.5*dq;
       qR(i)   = q(i) - 0.5*dq;   
 
@@ -216,6 +220,7 @@ void ArrayReconstruct (const Data *data, const Ary3D &Q, int flag_dir,
     Ary1D q(&data->sweep->vC[offset],ni);
     Ary1D qL(&data->sweep->vL[offset],ni);
     Ary1D qR(&data->sweep->vR[offset],ni);
+    const LinearGeometry geometry(grid,dir,i);
 
     double qp, qm;
     
@@ -224,8 +229,8 @@ void ArrayReconstruct (const Data *data, const Ary3D &Q, int flag_dir,
       qL(i+1) = qR(i) = q(i);
       continue;
     }else if (flag(i) & FLAG_MINMOD) {
-      dqp = q(i+1) - q(i);
-      dqm = q(i) - q(i-1);
+      dqp = (q(i+1) - q(i))*geometry.wp;
+      dqm = (q(i) - q(i-1))*geometry.wm;
       dq = MINMOD_LIMITER(dqp, dqm);
       qL(i+1) = q(i) + 0.5*dq;
       qR(i)   = q(i) - 0.5*dq;
@@ -233,8 +238,14 @@ void ArrayReconstruct (const Data *data, const Ary3D &Q, int flag_dir,
     }
     #endif
 
+#if MAPPED_GRID == YES
+    const double stencil[3] = {q(i-1),q(i),q(i+1)};
+    qp = ReconstructionFace(grid,dir,i-1,3,i+1,stencil);
+    qm = ReconstructionFace(grid,dir,i-1,3,i,stencil);
+#else
     qp = (    -q(i-1) + 5.0*q(i) + 2.0*q(i+1))/6.0;
     qm = ( 2.0*q(i-1) + 5.0*q(i) -     q(i+1))/6.0;
+#endif
     
     dqp = qp - q(i);
     dqm = qm - q(i);
@@ -274,6 +285,7 @@ void ArrayReconstruct (const Data *data, const Ary3D &Q, int flag_dir,
     Ary1D q(&data->sweep->vC[offset],ni);
     Ary1D qL(&data->sweep->vL[offset],ni);
     Ary1D qR(&data->sweep->vR[offset],ni);
+    const LinearGeometry geometry(grid,dir,i);
   
     #if SHOCK_FLATTENING == MULTID
     if (flag(i) & FLAG_FLAT) {
@@ -281,8 +293,8 @@ void ArrayReconstruct (const Data *data, const Ary3D &Q, int flag_dir,
       qR(i)   = q(i);
       continue;
     }else if (flag(i) & FLAG_MINMOD) {
-      dqp = q(i+1) - q(i);
-      dqm = q(i) - q(i-1);
+      dqp = (q(i+1) - q(i))*geometry.wp;
+      dqm = (q(i) - q(i-1))*geometry.wm;
       dq = MINMOD_LIMITER(dqp, dqm);
       qL(i+1) = q(i) + 0.5*dq;
       qR(i)   = q(i) - 0.5*dq;
@@ -292,9 +304,10 @@ void ArrayReconstruct (const Data *data, const Ary3D &Q, int flag_dir,
 
     #if HO_ORDER_REDUCTION == LINEAR
     if (flag(i) & FLAG_HO_LAP_LIMITER){
-      dqp = q(i+1) - q(i);
-      dqm = q(i) - q(i-1);
-      dq  = VANLEER_LIMITER(dqp, dqm);
+      dqp = (q(i+1) - q(i))*geometry.wp;
+      dqm = (q(i) - q(i-1))*geometry.wm;
+      SET_VL_LIMITER(dq,dqp,dqm,geometry.cp,geometry.cm);
+      dq = geometry.bound(dq,dqp,dqm);
       qL(i+1) = q(i) + 0.5*dq;
       qR(i)   = q(i) - 0.5*dq;
     }else
@@ -326,6 +339,7 @@ void ArrayReconstruct (const Data *data, const Ary3D &Q, int flag_dir,
     Ary1D q(&data->sweep->vC[offset],ni);
     Ary1D qL(&data->sweep->vL[offset],ni);
     Ary1D qR(&data->sweep->vR[offset],ni);
+    const LinearGeometry geometry(grid,dir,i);
 
     #if SHOCK_FLATTENING == MULTID
     if (flag(i) & FLAG_FLAT) {
@@ -333,8 +347,8 @@ void ArrayReconstruct (const Data *data, const Ary3D &Q, int flag_dir,
       qR(i)   = q(i);
       continue;
     }else if (flag(i) & FLAG_MINMOD) {
-      dqp = q(i+1) - q(i);
-      dqm = q(i) - q(i-1);
+      dqp = (q(i+1) - q(i))*geometry.wp;
+      dqm = (q(i) - q(i-1))*geometry.wm;
       dq = MINMOD_LIMITER(dqp, dqm);
       qL(i+1) = q(i) + 0.5*dq;
       qR(i)   = q(i) - 0.5*dq;
@@ -349,9 +363,10 @@ void ArrayReconstruct (const Data *data, const Ary3D &Q, int flag_dir,
     }else
     #elif HO_ORDER_REDUCTION == LINEAR
     if (flag(i) & FLAG_HO_LAP_LIMITER){
-      dqp = q(i+1) - q(i);
-      dqm = q(i) - q(i-1);
-      dq  = VANLEER_LIMITER(dqp, dqm);
+      dqp = (q(i+1) - q(i))*geometry.wp;
+      dqm = (q(i) - q(i-1))*geometry.wm;
+      SET_VL_LIMITER(dq,dqp,dqm,geometry.cp,geometry.cm);
+      dq = geometry.bound(dq,dqp,dqm);
       qL(i+1) = q(i) + 0.5*dq;
       qR(i)   = q(i) - 0.5*dq;
     }else

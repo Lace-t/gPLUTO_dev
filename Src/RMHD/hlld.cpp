@@ -36,6 +36,9 @@
 */
 ////////////////////////////////////////////////////////////////////////
 #include "gpluto.hpp"
+#if RMHD_ENTROPY_FIX == YES
+#include "entropy_guard.hpp"
+#endif
 
 #define HLLD_ITERATIONS   -1
 
@@ -477,10 +480,33 @@ void HLLD_Solver (Data *data, timeStep *Dts, Grid *grid, RBox *box)
     // 2g. Compute Powell / GLM interface states
 
     #if DIVB_CONTROL == EIGHT_WAVES
-    Bn(i) = (flux(i,RHO) > 0.0 ? vl[BXn]:vr[BXn]);
+    // Use the outer-wave-weighted interface field for the Powell source.
+    Bn(i) = (bR*vl[BXn] - bL*vr[BXn])/(bR - bL);
     #elif DIVB_CONTROL == DIV_CLEANING
     Bn(i)   = flux(i,PSI_GLM)/ch2;
     PSIn(i) = flux(i,BXn);
+    #endif
+
+    // Protect the local fluid entropy inequality after the
+    // HLLD core and Bn selection. Use the unmodified physical L/R fluxes,
+    // not the HLLD work states that temporarily use total energy.
+    #if RMHD_ENTROPY_FIX == YES
+    double candidate[NVAR];
+    #pragma acc loop seq
+    for (int n = 0; n < NFLX; ++n) candidate[n] = flux(i,n);
+    #if DIVB_CONTROL == CONSTRAINED_TRANSPORT
+    // Bn(i) is not a Powell/GLM output in CT. Use the common staggered field.
+    const double entropy_bn = vl[BXn];
+    #else
+    const double entropy_bn = Bn(i);
+    #endif
+    const auto entropy_result = EntropyGuard::apply(
+        vl, vr, ul, ur, fl, fr, Sl, Sr, entropy_bn, candidate, dir, run_config);
+    if (entropy_result.status == 1) {
+      #pragma acc loop seq
+      for (int n = 0; n < NFLX; ++n) flux(i,n) = candidate[n];
+      press(i) = (bR*pl - bL*pr)/(bR - bL);
+    }
     #endif
 
     // 2h. Compute tracer fluxes

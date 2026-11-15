@@ -63,6 +63,7 @@
 */
 ////////////////////////////////////////////////////////////////////////
 #include "gpluto.hpp"
+#include "reconstruction_geometry.hpp"
 
 // Explicit template instantiations
 template void Reconstruct<IDIR> (Data *, Grid *, RBox *);
@@ -124,6 +125,7 @@ void Reconstruct (Data *data, Grid *grid, RBox *box)
     Ary1Duint32_t flag(&data->sweep->flag[offset],ni);
    
     double dvm, dvp, dv, vp, vm;
+    const LinearGeometry geometry(grid,dir,i);
     double cm = 2.0;
     double cp = 2.0;
 
@@ -132,8 +134,8 @@ void Reconstruct (Data *data, Grid *grid, RBox *box)
     if (flag(i) & FLAG_FLAT) {
       vR(i,nv) = vL(i+1,nv) = v(i,nv);
     } else if (flag(i) & FLAG_MINMOD) {
-      dvp = v(i+1,nv) - v(i,nv);
-      dvm = v(i,nv)   - v(i-1,nv);
+      dvp = (v(i+1,nv) - v(i,nv))*geometry.wp;
+      dvm = (v(i,nv)   - v(i-1,nv))*geometry.wm;
       dv  = MINMOD_LIMITER(dvp, dvm);
       vL(i+1,nv) = v(i,nv) + 0.5*dv;
       vR(i,nv)   = v(i,nv) - 0.5*dv;
@@ -142,8 +144,8 @@ void Reconstruct (Data *data, Grid *grid, RBox *box)
       // 2b. Initialize the left and right states 
       //      to unique interface value.
 
-      vp  =  (-v(i-1,nv) + 7.0*(v(i,nv) + v(i+1,nv)) - v(i+2,nv))/12.0;
-      vm  =  (-v(i-2,nv) + 7.0*(v(i-1,nv) + v(i,nv)) - v(i+1,nv))/12.0;
+      vp  =  PPMGeometryFace(grid,dir,i+1,v(i-1,nv),v(i,nv),v(i+1,nv),v(i+2,nv));
+      vm  =  PPMGeometryFace(grid,dir,i,v(i-2,nv),v(i-1,nv),v(i,nv),v(i+1,nv));
 
       // 2c. Constraint values to lie between adjacent cell averages.
       //      Same as imposing 
@@ -297,6 +299,7 @@ void Reconstruct (Data *data, Grid *grid, RBox *box)
     double dvF_p[NVAR], dvF_m[NVAR];
     int    ti, tj, tk;
     double dvp[NVAR], dvm[NVAR], dv;
+    const LinearGeometry geometry(grid,dir,i);
     double cm = 2.0;
     double cp = 2.0;
     double dwp[NVAR], dwm[NVAR];
@@ -320,8 +323,8 @@ void Reconstruct (Data *data, Grid *grid, RBox *box)
     } else if (flag(i) & FLAG_MINMOD) {
       //#pragma acc loop
       for (nv = 0; nv < NVAR; nv++){
-        dvp[nv] = v(i+1,nv) - v(i,nv);
-        dvm[nv] = v(i,nv)   - v(i-1,nv);
+        dvp[nv] = (v(i+1,nv) - v(i,nv))*geometry.wp;
+        dvm[nv] = (v(i,nv)   - v(i-1,nv))*geometry.wm;
         dv  = MINMOD_LIMITER(dvp[nv], dvm[nv]);
         vL(i+1,nv) = v(i,nv) + 0.5*dv;
         vR(i,nv)   = v(i,nv) - 0.5*dv;
@@ -335,8 +338,8 @@ void Reconstruct (Data *data, Grid *grid, RBox *box)
         vc[nv]    = v(i,nv);
         dvF_p[nv] = v(i+1,nv) - v(i,nv);
         dvF_m[nv] = v(i,nv) - v(i-1,nv);
-        vppm4_p[nv] = (-v(i-1,nv) + 7.0*(v(i,nv) + v(i+1,nv)) - v(i+2,nv))/12.0;
-        vppm4_m[nv] = (-v(i-2,nv) + 7.0*(v(i-1,nv) + v(i,nv)) - v(i+1,nv))/12.0;
+        vppm4_p[nv] = PPMGeometryFace(grid,dir,i+1,v(i-1,nv),v(i,nv),v(i+1,nv),v(i+2,nv));
+        vppm4_m[nv] = PPMGeometryFace(grid,dir,i,v(i-2,nv),v(i-1,nv),v(i,nv),v(i+1,nv));
       }
 
       STATE_SET (state, vc, NULL, NULL, x1[ti], x2[tj], x3[tk]);
@@ -426,14 +429,14 @@ void Reconstruct (Data *data, Grid *grid, RBox *box)
       //     reconstruction on density and pressure.
 
       if (vL(i+1,RHO) < 0.0 || vR(i,RHO) < 0.0) {
-        dvp[RHO] = 0.5*(MINMOD_LIMITER(dvF_p[RHO], dvF_m[RHO]));
+        dvp[RHO] = 0.5*(geometry.minmod(dvF_p[RHO], dvF_m[RHO]));
         dvm[RHO] = - dvp[RHO];
         vL(i+1,RHO) = v(i,RHO) + dvp[RHO];
         vR(i,RHO)   = v(i,RHO) + dvm[RHO];
       }
       #if HAVE_ENERGY
       if (vL(i+1,PRS) < 0.0 || vR(i,PRS) < 0.0) {
-        dvp[PRS] = 0.5*(MINMOD_LIMITER(dvF_p[PRS], dvF_m[PRS]));
+        dvp[PRS] = 0.5*(geometry.minmod(dvF_p[PRS], dvF_m[PRS]));
         dvm[PRS] = - dvp[PRS];
         vL(i+1,PRS) = v(i,PRS) + dvp[PRS];
         vR(i,PRS)   = v(i,PRS) + dvm[PRS];
@@ -441,7 +444,7 @@ void Reconstruct (Data *data, Grid *grid, RBox *box)
       #endif
       #if RADIATION
       if (vL(i+1,ENR) < 0.0 || vR(i,ENR) < 0.0) {
-        dvp[ENR] = 0.5*(MINMOD_LIMITER(dvF_p[ENR], dvF_m[ENR]));
+        dvp[ENR] = 0.5*(geometry.minmod(dvF_p[ENR], dvF_m[ENR]));
         dvm[ENR] = - dvp[ENR];
         vL(i+1,ENR) = v(i,ENR) + dvp[ENR];
         vR(i,ENR)   = v(i,ENR) + dvm[ENR];
