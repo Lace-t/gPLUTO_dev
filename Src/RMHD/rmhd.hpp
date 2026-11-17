@@ -141,14 +141,7 @@ enum KWAVES {
 // One policy for the HLLC and HLLD fluid Riemann solvers. Work in the
 // local orthonormal frame, before RHS metric/area transformations.
 #ifndef RMHD_ENTROPY_FIX
-  #if PHYSICS == RMHD && EOS == IDEAL && RMHD_REDUCED_ENERGY == YES && \
-      (GEOMETRY == CARTESIAN || GEOMETRY == CYLINDRICAL || GEOMETRY == SPHERICAL) && \
-      ((DIVB_CONTROL == EIGHT_WAVES && EIGHT_WAVES_REDUCED == NO) || \
-       DIVB_CONTROL == DIV_CLEANING || DIVB_CONTROL == CONSTRAINED_TRANSPORT)
-    #define RMHD_ENTROPY_FIX YES
-  #else
     #define RMHD_ENTROPY_FIX NO
-  #endif
 #endif
 #if RMHD_ENTROPY_FIX == YES && \
     (PHYSICS != RMHD || EOS != IDEAL || RMHD_REDUCED_ENERGY != YES || \

@@ -500,9 +500,9 @@ void HLLD_Solver (Data *data, timeStep *Dts, Grid *grid, RBox *box)
     #else
     const double entropy_bn = Bn(i);
     #endif
-    const auto entropy_result = EntropyGuard::apply(
-        vl, vr, ul, ur, fl, fr, Sl, Sr, entropy_bn, candidate, dir, run_config);
-    if (entropy_result.status == 1) {
+    const bool entropy_switched = EntropyGuard::apply_flux<dir>(
+        vl, vr, ul, ur, fl, fr, Sl, Sr, entropy_bn, candidate, run_config, pl, pr);
+    if (entropy_switched) {
       #pragma acc loop seq
       for (int n = 0; n < NFLX; ++n) flux(i,n) = candidate[n];
       press(i) = (bR*pl - bL*pr)/(bR - bL);

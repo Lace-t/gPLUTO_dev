@@ -21,3 +21,6 @@ DEFAULT_HEADERS = grid_spec.hpp grid_input.hpp Array.hpp definitions.hpp eos.hpp
                   macros.hpp metric.hpp plm_coeffs.hpp reconstruction_geometry.hpp prototypes.hpp \
                   states.hpp structs.hpp
 
+
+# CPU floating-point policy is applied once at startup.
+main.o: $(SRC)/cpu_fp.hpp

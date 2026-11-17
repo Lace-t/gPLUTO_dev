@@ -31,6 +31,7 @@
 */
 ////////////////////////////////////////////////////////////////////////
 #include "gpluto.hpp"
+#include "cpu_fp.hpp"
 #include "time.h"
 #if defined(_OPENACC)
 #include <cuda_runtime.h>
@@ -153,6 +154,12 @@ MPI_Init(&argc, &argv);
   #endif
 
   RuntimeSet(&runtime);
+
+  // Set every MPI rank before initialization and checkpoint recovery.
+  const unsigned cpu_fp_mode = CpuFp::configure();
+  if (g_rank == 0 && cpu_fp_mode)
+    std::printf ("> CPU MXCSR = 0x%04x (FTZ/DAZ %s)\n", cpu_fp_mode,
+              (cpu_fp_mode & 0x8040u) == 0x8040u ? "on" : "off");
 
   // --------------------------------------------------------
   // 2. Initialize members of timeStep structure
