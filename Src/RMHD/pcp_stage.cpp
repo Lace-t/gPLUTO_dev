@@ -782,10 +782,31 @@ static int PCPRecoverStageImpl(Data *data, Grid *grid, RBox &box,
     MetricSet(metric, grid->rC[i], grid->sC[j]);
     ConsToOrtho(u, metric);
 #endif
+//skip the recovery if the cell has already succeeded in CT_RMHD_CONSISTENT mode
     const size_t cell = i + (size_t)grid->ntot[0] * (j + (size_t)grid->ntot[1] * k);
     const bool ct_failure = (data->flag(i, j, k) & FLAG_PCP_CT_FAIL) != 0;
+#if defined(STAGGERED_MHD) && CT_RMHD_CONSISTENT == YES
+    const bool ct_ready = !fused && !ct_failure &&
+        (data->flag(i, j, k) & FLAG_PCP_CT_READY) != 0;
+    // Consume before committing/rejecting: a later recovery must not reuse V
+    // after another operation has changed U. Failure still follows FOFC.
+    data->flag(i, j, k) &= ~FLAG_PCP_CT_READY;
+    int err;
+    if (ct_ready) {
+      for (int n = 0; n < NVAR; ++n) v[n] = data->Vc(i, j, k, n);
+      // Also check the final stored U after the coordinate round trip.
+      err = !RMHD_PCP_Check(u);
+      for (int n = 0; n < NVAR; ++n) {
+        if (!isfinite(u[n]) || !isfinite(v[n])) err = 1;
+      }
+    } else {
+      err = candidate_cache::recover(u, v, run_config, allow_pressure_fix,
+                                     cell, ct_failure, use_candidate, data->flag(i, j, k));
+    }
+#else
     const int err = candidate_cache::recover(u, v, run_config, allow_pressure_fix,
                                              cell, ct_failure, use_candidate, data->flag(i, j, k));
+#endif
 #if PCP_FOFC == YES
     if (managed) rejected(i, j, k) = err != 0;
 #endif
@@ -928,7 +949,7 @@ uint32_t RMHD_PCP_RunStage(Data *data, timeStep *Dts, double dt,
   for (int k = 0; k < nz; ++k) {
     for (int j = 0; j < ny; ++j) {
       for (int i = 0; i < nx; ++i) {
-        data->flag(i, j, k) &= ~(FLAG_PCP_FOFC | FLAG_PCP_CT_FAIL);
+        data->flag(i, j, k) &= ~(FLAG_PCP_FOFC | FLAG_PCP_CT_FAIL | FLAG_PCP_CT_READY);
         // Whole-step fallback selects only troubled roots, not every face.
         if (step_retry > 0 && (data->flag(i, j, k) & FLAG_HLL)) {
           data->flag(i, j, k) |= FLAG_PCP_FOFC;

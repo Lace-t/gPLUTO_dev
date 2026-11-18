@@ -304,6 +304,8 @@ void CT_AverageStaggeredFields (Data *data, int ct_eng_corr, RBox *box, Grid *gr
     #endif // (GEOMETRY == CARTESIAN) && (PHYSICS !=GRMHD) || ...
 
     #if PHYSICS == RMHD && CT_RMHD_CONSISTENT
+    // A new average invalidates any primitive from an earlier CT correction.
+    data->flag(i,j,k) &= ~FLAG_PCP_CT_READY;
     if (ct_eng_corr) {
       double prim[NVAR];
       if (CT_RMHD_CorrectCell(u, prim, Bf, rc)) {
@@ -319,6 +321,10 @@ void CT_AverageStaggeredFields (Data *data, int ct_eng_corr, RBox *box, Grid *gr
         #if GEOMETRY != CARTESIAN
         ConsToOrtho(u,metric);
         #endif
+        // CA2' already constructed the primitive of the corrected U. Keep it
+        // for the stage commit instead of inverting P2C's result once more.
+        for (int n = 0; n < NVAR; ++n) data->Vc(i,j,k,n) = prim[n];
+        data->flag(i,j,k) |= FLAG_PCP_CT_READY;
       }
     }
     #endif

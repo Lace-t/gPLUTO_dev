@@ -184,6 +184,8 @@ enum KWAVES {
 #define CT_RMHD_CONSISTENT NO
 #endif
 
+// One-shot primitive produced by CA2'; consumed by stage recovery.
+#define FLAG_PCP_CT_READY (1u << 28)
 #define FLAG_PCP_FOFC (1u << 29)
 #define FLAG_PCP_CT_FAIL (1u << 30)
 #if PCP_STAGE_LOCAL_PASSES < 1
