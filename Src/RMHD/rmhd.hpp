@@ -962,6 +962,20 @@ struct RHSTarget {
 private:
   Ary4D *previous;
 };
+// A retry with no new roots has the same snapshot, dt and LF operator.
+extern int newly_rejected;
+// Idle ranks retain an accepted candidate but still enter flag exchange and
+// the same global recovery decision as ranks doing numerical work.
+extern bool rank_idle;
+extern int local_rejected;
+bool retry_has_work(Data *data, const Grid *grid);
+// Bounds: (transverse index 1, transverse index 2, 2*dir + lo/hi).
+extern Ary3DInt replay_rows;
+extern Ary3Dbool replay_cells;
+// Valid only inside the FOFC retry candidate/CT correction phase.
+extern bool local_candidate;
+bool replay_enabled();
+void prepare_replay(Data *data, const Grid *grid, const RBox *box);
 bool stream_enabled();
 bool rk_enabled();
 inline bool restore() { return active && pass > 0; }

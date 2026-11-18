@@ -208,7 +208,15 @@ void CT_EnergyCorrection (Data *data, Ary4D &dUc, double dt, Grid *grid, RBox *b
   // 2. Update energy
   // --------------------------------------------------------
 
+  // Unchanged cells retain the already corrected RHS from the preceding
+  // attempt. Adding the same Poynting correction twice would corrupt it.
+#if PHYSICS == RMHD && PCP_FOFC == YES && !defined(_OPENMP)
+  const bool sparse = fofc_cache::rhs_target && fofc_cache::replay_enabled();
+#endif
   BOX_LOOP(*box, i,j,k){
+#if PHYSICS == RMHD && PCP_FOFC == YES && !defined(_OPENMP)
+    if (sparse && !fofc_cache::replay_cells(i,j,k)) continue;
+#endif
     double dtdx = dt/grid->dx[IDIR][i];
     double dtdy = dt/grid->dx[JDIR][j];
     double dtdz = dt/grid->dx[KDIR][k];

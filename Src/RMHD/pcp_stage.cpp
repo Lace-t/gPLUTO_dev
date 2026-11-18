@@ -12,11 +12,17 @@
 namespace fofc_cache {
 bool active = false;
 int pass = 0;
+int newly_rejected = 0;
+bool rank_idle = false;
+bool local_candidate = false;
+static bool stage_running = false;
+int local_rejected = 0;
 Ary4D *rhs_target = nullptr;
 
 Stage::Stage()
 {
   assert(!active);
+  stage_running = true;
 #ifdef _OPENACC
   const char *disable = "GPU_FOFC_CACHE_DISABLE";
 #else
@@ -24,8 +30,143 @@ Stage::Stage()
 #endif
   active = reusable() && std::getenv(disable) == nullptr;
   pass = 0;
+  local_candidate = false;
+  rank_idle = false;
+  local_rejected = 0;
 }
-Stage::~Stage() { active = false; }
+Stage::~Stage()
+{
+  active = false;
+  rank_idle = false;
+  local_candidate = false;
+  stage_running = false;
+}
+
+bool retry_has_work(Data *data, const Grid *grid)
+{
+  if (pass == 0 || local_rejected) return true;
+#if defined(HIGH_ORDER) || RADIATION || RESISTIVITY != NO || RING_AVERAGE > 1
+  return true;
+#else
+  // Conservatively inspect the complete exchanged halo, including corners.
+  // CT needs diagonal roots: corrected face EMFs affect adjacent edges and
+  // staggered faces. An axial-neighbor-only test is not sufficient for CT.
+  const int nx = grid->ntot[0], ny = grid->ntot[1], nz = grid->ntot[2];
+  int roots = 0;
+#pragma acc parallel loop collapse(3) present(data) reduction(max:roots)
+  for (int k = 0; k < nz; ++k) {
+    for (int j = 0; j < ny; ++j) {
+      for (int i = 0; i < nx; ++i) {
+        if (data->flag(i, j, k) & FLAG_PCP_FOFC) roots = 1;
+      }
+    }
+  }
+  return roots != 0;
+#endif
+}
+
+Ary3DInt replay_rows;
+Ary3Dbool replay_cells;
+
+// Accepted primitives survive restoration of the original stage primitives.
+// U itself stays in data->Uc outside the correction footprint.
+Ary4D accepted_primitive;
+Ary3Dbool rejected_cells;
+
+bool replay_enabled()
+{
+  // Reuse unaffected RHS cells. OpenACC EW/CT rebuild face fluxes normally;
+  // only the cell RHS is sparse, without enabling unsupported flux caches.
+#if defined(_OPENMP) || defined(HIGH_ORDER) || RADIATION || \
+    RESISTIVITY != NO || RING_AVERAGE > 1 || \
+    (DIVB_CONTROL == CONSTRAINED_TRANSPORT && CT_EMF_BOUNDARY == YES)
+  return false;
+#else
+#ifdef _OPENACC
+  const bool supported = GEOMETRY == CARTESIAN;
+#else
+  const bool supported = active;
+#endif
+  return supported && pass > 0;
+#endif
+}
+
+void prepare_replay(Data *data, const Grid *grid, const RBox *box)
+{
+  // First-pass RHS kernels also name these objects in their present clause.
+  if (!replay_cells.isAllocated()) {
+    const int nx = grid->ntot[0], ny = grid->ntot[1], nz = grid->ntot[2];
+    const int width = MAX(nx, MAX(ny, nz));
+    replay_cells.create(nx, ny, nz);
+    replay_rows.create(width, width, 6);
+    accepted_primitive.create(nx, ny, nz, NVAR);
+    rejected_cells.create(nx, ny, nz);
+#pragma acc enter data copyin(accepted_primitive, rejected_cells, replay_cells, replay_rows)
+  }
+  if (!replay_enabled()) return;
+  const int ib = box->ibeg, ie = box->iend;
+  const int jb = box->jbeg, je = box->jend;
+  const int kb = box->kbeg, ke = box->kend;
+  // Corrected faces change the root and axial neighbors. Received ghost
+  // roots are included so shared faces affect both adjacent ranks.
+#pragma acc parallel loop collapse(3) present(data, grid, replay_cells)
+  for (int k = kb; k <= ke; ++k) {
+    for (int j = jb; j <= je; ++j) {
+      for (int i = ib; i <= ie; ++i) {
+        uint32_t mask = data->flag(i, j, k);
+#ifdef STAGGERED_MHD
+        // Include the face -> edge EMF -> face/cell footprint. A radius-two
+        // box is conservative for the supported nearest-neighbor CT EMFs,
+        // including the edge Poynting-flux energy correction.
+        for (int dz = -2*INCLUDE_KDIR; dz <= 2*INCLUDE_KDIR; ++dz) {
+          for (int dy = -2*INCLUDE_JDIR; dy <= 2*INCLUDE_JDIR; ++dy) {
+            for (int dx = -2*INCLUDE_IDIR; dx <= 2*INCLUDE_IDIR; ++dx) {
+              const int x = i+dx, y = j+dy, z = k+dz;
+              if (x >= 0 && x < grid->ntot[0] &&
+                  y >= 0 && y < grid->ntot[1] &&
+                  z >= 0 && z < grid->ntot[2]) mask |= data->flag(x,y,z);
+            }
+          }
+        }
+#else
+#if INCLUDE_IDIR
+        mask |= data->flag(i-1, j, k) | data->flag(i+1, j, k);
+#endif
+#if INCLUDE_JDIR
+        mask |= data->flag(i, j-1, k) | data->flag(i, j+1, k);
+#endif
+#if INCLUDE_KDIR
+        mask |= data->flag(i, j, k-1) | data->flag(i, j, k+1);
+#endif
+#endif
+        replay_cells(i, j, k) = (mask & FLAG_PCP_FOFC) != 0;
+      }
+    }
+  }
+  for (int dir = 0; dir < DIMENSIONS; ++dir) {
+    const int ab = dir == IDIR ? jb : ib;
+    const int ae = dir == IDIR ? je : ie;
+    const int bb = dir == KDIR ? jb : kb;
+    const int be = dir == KDIR ? je : ke;
+    const int qb = dir == IDIR ? ib : (dir == JDIR ? jb : kb);
+    const int qe = dir == IDIR ? ie : (dir == JDIR ? je : ke);
+#pragma acc parallel loop collapse(2) present(replay_cells, replay_rows)
+    for (int b = bb; b <= be; ++b) {
+      for (int a = ab; a <= ae; ++a) {
+        int lo = qe + 1, hi = qb - 1;
+#pragma acc loop seq
+        for (int q = qb; q <= qe; ++q) {
+          const int i = dir == IDIR ? q : a;
+          const int j = dir == IDIR ? a : (dir == JDIR ? q : b);
+          const int k = dir == KDIR ? q : b;
+          if (replay_cells(i, j, k)) { lo = MIN(lo, q); hi = q; }
+        }
+        replay_rows(a, b, 2*dir) = lo;
+        replay_rows(a, b, 2*dir+1) = hi;
+      }
+    }
+  }
+}
 
 bool stream_enabled()
 {
@@ -49,7 +190,12 @@ bool rk_enabled()
 RHSTarget::RHSTarget(Ary4D &u) : previous(rhs_target)
 {
 #ifdef _OPENACC
-  const bool enabled = reusable() && std::getenv("GPU_RHS_FUSE_DISABLE") == nullptr;
+#if GEOMETRY == CARTESIAN && !defined(HIGH_ORDER) && !RADIATION && \
+    RESISTIVITY == NO && RING_AVERAGE <= 1
+  const bool enabled = std::getenv("GPU_RHS_FUSE_DISABLE") == nullptr;
+#else
+  const bool enabled = false;
+#endif
 #else
   const bool enabled = active && std::getenv("FOFC_FUSE_DISABLE") == nullptr;
 #endif
@@ -464,7 +610,9 @@ struct PCPSnapshot {
   void transfer(Data *d, Grid *g, int save)
   {
     int nx = g->ntot[0], ny = g->ntot[1], nz = g->ntot[2];
-#pragma acc parallel loop collapse(3) present(d, u, v)
+    const bool local = fofc_cache::local_candidate;
+    const Ary3Dbool &cells = fofc_cache::replay_cells;
+#pragma acc parallel loop collapse(3) present(d, g, u, v, cells)
     for (int k = 0; k < nz; ++k) {
       for (int j = 0; j < ny; ++j) {
         for (int i = 0; i < nx; ++i) {
@@ -473,7 +621,12 @@ struct PCPSnapshot {
               u(i, j, k, n) = d->Uc(i, j, k, n);
               v(i, j, k, n) = d->Vc(i, j, k, n);
             } else {
-              d->Uc(i, j, k, n) = u(i, j, k, n);
+              // Ghost U is not used by the retry kernels; active U outside
+              // the footprint already contains the accepted candidate.
+              if (!local || (i >= g->lbeg[0] && i <= g->lend[0] &&
+                  j >= g->lbeg[1] && j <= g->lend[1] &&
+                  k >= g->lbeg[2] && k <= g->lend[2] && cells(i, j, k)))
+                d->Uc(i, j, k, n) = u(i, j, k, n);
               d->Vc(i, j, k, n) = v(i, j, k, n);
             }
           }
@@ -578,11 +731,43 @@ static int PCPRecoverStageImpl(Data *data, Grid *grid, RBox &box,
                                double stage_weight)
 {
   int i, j, k;
-  int bad = 0;
-  const bool use_candidate = candidate_cache::enabled() && !allow_pressure_fix;
+  int bad = 0, added = 0;
+#if PCP_FOFC == YES
+  const bool local = fofc_cache::local_candidate;
+  const bool managed = fofc_cache::stage_running;
+  if (!managed) fofc_cache::prepare_replay(data, grid, &box);
+  const Ary3Dbool &cells = fofc_cache::replay_cells;
+  Ary3Dbool &rejected = fofc_cache::rejected_cells;
+  Ary4D &accepted_v = fofc_cache::accepted_primitive;
+#endif
 
-#pragma acc parallel loop collapse(3) present(data, grid, run_config, box, Ubase, stage_u, rhs) reduction(+ : bad)
+  const bool use_candidate = candidate_cache::enabled() && !allow_pressure_fix;
+#if PCP_FOFC == YES
+  // An idle rank has a valid U/V candidate. Only its zero contribution to
+  // the collective is needed; do not reconstruct or recover that state.
+  if (!fofc_cache::rank_idle) {
+#endif
+#if PCP_FOFC == YES
+#pragma acc parallel loop collapse(3) present(data, grid, run_config, box, Ubase, stage_u, rhs, cells, rejected, accepted_v) reduction(+ : bad, added)
+#else
+#pragma acc parallel loop collapse(3) present(data, grid, run_config, box, Ubase, stage_u, rhs) reduction(+ : bad, added)
+#endif
   BOX_LOOP (box, i, j, k) {
+#if PCP_FOFC == YES
+    // A pressure repair only needs cells rejected by the last candidate.
+    // A retry only needs the cumulative flux/EMF correction footprint.
+    if ((allow_pressure_fix && managed && !rejected(i, j, k)) ||
+        (!allow_pressure_fix && local && !cells(i, j, k))) {
+      // UpdateStage saw the original stage V. Restore accepted V only on
+      // the retry path; pressure repair starts with accepted V in place.
+      if (!allow_pressure_fix) {
+        for (int n = 0; n < NVAR; ++n) {
+          data->Vc(i, j, k, n) = accepted_v(i, j, k, n);
+        }
+      }
+      continue;
+    }
+#endif
     double u[NVAR], v[NVAR];
     for (int n = 0; n < NVAR; ++n) {
       if constexpr (fused) {
@@ -601,6 +786,9 @@ static int PCPRecoverStageImpl(Data *data, Grid *grid, RBox &box,
     const bool ct_failure = (data->flag(i, j, k) & FLAG_PCP_CT_FAIL) != 0;
     const int err = candidate_cache::recover(u, v, run_config, allow_pressure_fix,
                                              cell, ct_failure, use_candidate, data->flag(i, j, k));
+#if PCP_FOFC == YES
+    if (managed) rejected(i, j, k) = err != 0;
+#endif
     if (err) {
       if constexpr (fused) {
         // Keep the original coordinate representation on failure. Neither a
@@ -610,6 +798,7 @@ static int PCPRecoverStageImpl(Data *data, Grid *grid, RBox &box,
               stage_weight * (stage_u(i, j, k, n) + rhs(i, j, k, n));
         }
       }
+      if (!(data->flag(i, j, k) & FLAG_PCP_FOFC)) ++added;
       data->flag(i, j, k) |= FLAG_PCP_FOFC | FLAG_FALLBACK;
       ++bad;
     } else {
@@ -620,11 +809,24 @@ static int PCPRecoverStageImpl(Data *data, Grid *grid, RBox &box,
       for (int n = 0; n < NVAR; ++n) {
         data->Uc(i, j, k, n) = u[n];
         data->Vc(i, j, k, n) = v[n];
+#if PCP_FOFC == YES
+        if (managed) accepted_v(i, j, k, n) = v[n];
+#endif
       }
     }
   }
+#if PCP_FOFC == YES
+  }
+  fofc_cache::local_rejected = bad;
+#endif
 #ifdef PARALLEL
-  MPI_Allreduce(MPI_IN_PLACE, &bad, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+  int counts[2] = {bad, added};
+  MPI_Allreduce(MPI_IN_PLACE, counts, 2, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+  bad = counts[0];
+  added = counts[1];
+#endif
+#if PCP_FOFC == YES
+  fofc_cache::newly_rejected = added;
 #endif
   return bad;
 }
@@ -693,6 +895,7 @@ uint32_t RMHD_PCP_RunStage(Data *data, timeStep *Dts, double dt,
     stage.create(grid);
     allocated = true;
   }
+  fofc_cache::prepare_replay(data, grid, box);
   stage.transfer(data, grid, 1);
   RunConfig &run_config = *data->run_config;
   int nx = grid->ntot[0], ny = grid->ntot[1], nz = grid->ntot[2];
@@ -737,9 +940,6 @@ uint32_t RMHD_PCP_RunStage(Data *data, timeStep *Dts, double dt,
   int bad = 0;
   for (int pass = 0; pass < local_passes; ++pass) {
     fofc_cache::pass = pass;
-    if (pass > 0) {
-      stage.transfer(data, grid, 0);
-    }
     // Keep COPY on later RK stages for other flag consumers; retain the
     // established first-stage optimization after the initial FlagShock.
 #if SHOCK_FLATTENING == MULTID && ENTROPY_SWITCH == NO
@@ -749,38 +949,56 @@ uint32_t RMHD_PCP_RunStage(Data *data, timeStep *Dts, double dt,
 #else
     FlagBoundary(data->flag, FLAG_COPY, grid);
 #endif
-    const bool pcp_flux_possible = (step_retry > 0 || pass > 0);
-    UpdateStage(data, rhs, rs, grid, Dts, box, dt, pcp_flux_possible);
+    // All ranks exchange the cumulative mask before deciding whether the
+    // accepted local candidate can survive this retry unchanged.
+    fofc_cache::rank_idle = !fofc_cache::retry_has_work(data, grid);
     const bool fuse_rk = fofc_cache::rk_enabled();
-    if(!fuse_rk){
-#pragma acc parallel loop collapse(3) present(data, rhs, box, Ubase, stage.u)
-    BOX_LOOP ((*box), i, j, k) {
-      for (int n = 0; n < NVAR; ++n) {
-        data->Uc(i, j, k, n) = initial_weight * Ubase(i, j, k, n) +
-                               stage_weight * (stage.u(i, j, k, n) + rhs(i, j, k, n));
-      }
-    }
-    }
-#ifdef STAGGERED_MHD
-    for (int n = 0; n < DIMENSIONS; ++n) {
-      int ex = box->iend + (n == 0);
-      int ey = box->jend + (n == 1);
-      int ez = box->kend + (n == 2);
-#pragma acc parallel loop collapse(3) present(data, box, rs, Bbase, stage.b)
-      for (int k = box->kbeg; k <= ez; ++k) {
-        for (int j = box->jbeg; j <= ey; ++j) {
-          for (int i = box->ibeg; i <= ex; ++i) {
-            data->Vs[n](i, j, k) = initial_weight * Bbase[n](i, j, k) +
-                                   stage_weight * (stage.b[n](i, j, k) + rs[n](i, j, k));
+    const Ary3Dbool &cells = fofc_cache::replay_cells;
+    if (!fofc_cache::rank_idle) {
+      fofc_cache::prepare_replay(data, grid, box);
+      fofc_cache::local_candidate = fofc_cache::replay_enabled();
+      if (pass > 0) stage.transfer(data, grid, 0);
+      const bool pcp_flux_possible = (step_retry > 0 || pass > 0);
+      UpdateStage(data, rhs, rs, grid, Dts, box, dt, pcp_flux_possible);
+      const bool local = fofc_cache::local_candidate;
+      if (!fuse_rk) {
+#pragma acc parallel loop collapse(3) present(data, rhs, box, Ubase, stage.u, cells)
+        BOX_LOOP ((*box), i, j, k) {
+          if (local && !cells(i, j, k)) continue;
+          for (int n = 0; n < NVAR; ++n) {
+            data->Uc(i, j, k, n) = initial_weight * Ubase(i, j, k, n) +
+                stage_weight * (stage.u(i, j, k, n) + rhs(i, j, k, n));
           }
         }
       }
+#ifdef STAGGERED_MHD
+      for (int n = 0; n < DIMENSIONS; ++n) {
+        int ex = box->iend + (n == 0);
+        int ey = box->jend + (n == 1);
+        int ez = box->kend + (n == 2);
+#pragma acc parallel loop collapse(3) present(data, box, rs, Bbase, stage.b)
+        for (int k = box->kbeg; k <= ez; ++k) {
+          for (int j = box->jbeg; j <= ey; ++j) {
+            for (int i = box->ibeg; i <= ex; ++i) {
+              data->Vs[n](i, j, k) = initial_weight * Bbase[n](i, j, k) +
+                                     stage_weight * (stage.b[n](i, j, k) + rs[n](i, j, k));
+            }
+          }
+        }
+      }
+#pragma acc parallel loop collapse(3) present(data, box, cells)
+      BOX_LOOP ((*box), i, j, k) {
+        if (local && !cells(i, j, k)) continue;
+        data->flag(i, j, k) &= ~FLAG_PCP_CT_FAIL;
+      }
+      CT_AverageStaggeredFields(data, 1, box, grid);
+#endif
     }
-#pragma acc parallel loop collapse(3) present(data, box)
-    BOX_LOOP ((*box), i, j, k) {
-      data->flag(i, j, k) &= ~FLAG_PCP_CT_FAIL;
+#if defined(STAGGERED_MHD) && CT_EMF_BOUNDARY == YES
+    else {
+      // The optional user hook may communicate; idle ranks must match it.
+      CT_EMF_Boundary(data, grid);
     }
-    CT_AverageStaggeredFields(data, 1, box, grid);
 #endif
     if (fuse_rk) {
       bad = PCPRecoverStageFused(data, grid, *box, run_config, Ubase, stage.u, rhs,
@@ -791,6 +1009,8 @@ uint32_t RMHD_PCP_RunStage(Data *data, timeStep *Dts, double dt,
     if (!bad) {
       return 0;
     }
+    // With no new global roots, another pass repeats the same candidate.
+    if (pass > 0 && fofc_cache::newly_rejected == 0) break;
     // printLog("> PCP: stage=%d pass=%d retry=%d rejected=%d dt=%.16e\n",
     //          g_intStage, pass, step_retry, bad, dt);
   }

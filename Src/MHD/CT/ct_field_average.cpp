@@ -88,6 +88,11 @@ void CT_AverageStaggeredFields (Data *data, int ct_eng_corr, RBox *box, Grid *gr
   double *x3r = grid->xR[KDIR], *x3l = grid->xL[KDIR];
   #endif
   double u[NVAR];
+#if PHYSICS == RMHD && PCP_FOFC == YES
+  const bool local = ct_eng_corr && fofc_cache::local_candidate;
+  const Ary3Dbool &cells = fofc_cache::replay_cells;
+#endif
+
   #if PHYSICS == RMHD && (PCP_NR == YES || PCP_FOFC == YES || FALLBACK_MODE == FALLBACK_RECOMPUTE || CT_RMHD_CONSISTENT == YES)
   RunConfig &rc = *data->run_config;
   #endif
@@ -126,6 +131,9 @@ void CT_AverageStaggeredFields (Data *data, int ct_eng_corr, RBox *box, Grid *gr
   #pragma acc parallel loop collapse(3) \
               present(grid, data) copyin(box,Bc0,Ec0) private(u[:NVAR])
   BOX_LOOP(*box, i,j,k){
+#if PHYSICS == RMHD && PCP_FOFC == YES
+    if (local && !cells(i,j,k)) continue;
+#endif
 
     double Bf[3];
     #if (PHYSICS == ResRMHD) && (DIVE_CONTROL == CONSTRAINED_TRANSPORT)
@@ -405,6 +413,9 @@ mynvtxstop_();
   #pragma omp target teams distribute parallel for collapse(3) map(to:box[:1])
   #pragma acc parallel loop collapse(3) present(grid, data, Bc0) copyin(box)
   BOX_LOOP(*box, i,j,k){
+#if PHYSICS == RMHD && PCP_FOFC == YES
+    if (local && !cells(i,j,k)) continue;
+#endif
     #if GEOMETRY != CARTESIAN
     Metric metric;
     MetricSet (metric, grid->rC[i], grid->sC[j]);

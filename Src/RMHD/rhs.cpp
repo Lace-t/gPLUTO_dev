@@ -134,6 +134,14 @@ static void RightHandSideImpl(Data *data, timeStep *Dts, const Grid *const grid,
   int jbeg = box->jbeg, jend = box->jend;
   int kbeg = box->kbeg, kend = box->kend;
 
+#if PCP_FOFC == YES && !defined(_OPENMP)
+  if (!fofc_cache::replay_cells.isAllocated())
+    fofc_cache::prepare_replay(data, grid, box);
+  const bool sparse = fused && fofc_cache::replay_enabled();
+  const Ary3DInt &rows = fofc_cache::replay_rows;
+  const Ary3Dbool &cells = fofc_cache::replay_cells;
+#endif
+
   double *x1  = grid->xC[IDIR], *x2  = grid->xC[JDIR], *x3  = grid->xC[KDIR];
   double *dx1 = grid->dx[IDIR], *dx2 = grid->dx[JDIR], *dx3 = grid->dx[KDIR];
   #if GEOMETRY != CARTESIAN
@@ -150,8 +158,6 @@ static void RightHandSideImpl(Data *data, timeStep *Dts, const Grid *const grid,
   #endif
 
   #if PHYSICS == RMHD
-  double divB;
-  double gradPSI;
   int    BXn = BX1 + dir;
   #endif
 
@@ -244,11 +250,26 @@ static void RightHandSideImpl(Data *data, timeStep *Dts, const Grid *const grid,
     // I2. Build rhs in the x1-dir
     // ----------------------------------------------------
 
+#if PCP_FOFC == YES && !defined(_OPENMP)
+    // Empty rows launch no numerical work. Holes in a row are also skipped:
+    // every replayed cell must receive ALL directions, in the original order.
+    #pragma acc parallel loop gang collapse(2) present(data, run_config, grid, target, rows, cells)
+    for (k = kbeg; k <= kend; k++){
+    for (j = jbeg; j <= jend; j++){
+    #pragma acc loop vector
+    for (i = sparse ? rows(j,k,0) : ibeg;
+         i <= (sparse ? rows(j,k,1) : iend); ++i) {
+      if (sparse && !cells(i,j,k)) continue;
+#else
     #pragma omp target teams distribute parallel for collapse(3) 
     #pragma acc parallel loop collapse(3) present(data, run_config, grid, target)
     for (k = kbeg; k <= kend; k++){
     for (j = jbeg; j <= jend; j++){
     for (i = ibeg; i <= iend; i++){
+#endif
+#if PHYSICS == RMHD
+      double divB, gradPSI;
+#endif
       long int offset1 = ni*(j + nj*k);
       long int offset  = NVAR*offset1;
       
@@ -479,11 +500,26 @@ static void RightHandSideImpl(Data *data, timeStep *Dts, const Grid *const grid,
     // J2. Build rhs in the x2-dir
     // ----------------------------------------------------
 
+#if PCP_FOFC == YES && !defined(_OPENMP)
+    // Empty rows launch no numerical work. Holes in a row are also skipped:
+    // every replayed cell must receive ALL directions, in the original order.
+    #pragma acc parallel loop gang collapse(2) present(data, run_config, grid, target, rows, cells)
+    for (k = kbeg; k <= kend; k++){
+    for (i = ibeg; i <= iend; i++){
+    #pragma acc loop vector
+    for (j = sparse ? rows(i,k,2) : jbeg;
+         j <= (sparse ? rows(i,k,3) : jend); ++j) {
+      if (sparse && !cells(i,j,k)) continue;
+#else
     #pragma omp target teams distribute parallel for collapse(3)
     #pragma acc parallel loop collapse(3) present(data, run_config, grid, target)
     for (k = kbeg; k <= kend; k++){
     for (i = ibeg; i <= iend; i++){
     for (j = jbeg; j <= jend; j++){      
+#endif
+#if PHYSICS == RMHD
+      double divB, gradPSI;
+#endif
 
       long int offset1 = ni*(i + nj*k);
       long int offset  = NVAR*offset1;
@@ -660,11 +696,26 @@ static void RightHandSideImpl(Data *data, timeStep *Dts, const Grid *const grid,
     // K2. Build rhs in the x3-dir
     // ----------------------------------------------------
 
+#if PCP_FOFC == YES && !defined(_OPENMP)
+    // Empty rows launch no numerical work. Holes in a row are also skipped:
+    // every replayed cell must receive ALL directions, in the original order.
+    #pragma acc parallel loop gang collapse(2) present(data, run_config, grid, target, rows, cells)
+    for (j = jbeg; j <= jend; j++){
+    for (i = ibeg; i <= iend; i++){
+    #pragma acc loop vector
+    for (k = sparse ? rows(i,j,4) : kbeg;
+         k <= (sparse ? rows(i,j,5) : kend); ++k) {
+      if (sparse && !cells(i,j,k)) continue;
+#else
     #pragma omp target teams distribute parallel for collapse(3)
     #pragma acc parallel loop collapse(3) present(data, run_config, grid, target)
     for (j = jbeg; j <= jend; j++){
     for (i = ibeg; i <= iend; i++){
     for (k = kbeg; k <= kend; k++){
+#endif
+#if PHYSICS == RMHD
+      double divB, gradPSI;
+#endif
 
       long int offset = NVAR*ni*(i + nj*j);
       long int offset1 = ni*(i + nj*j);
